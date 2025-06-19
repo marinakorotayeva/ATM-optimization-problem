@@ -1,69 +1,102 @@
 import pandas as pd
-import numpy as np
 from sklearn.linear_model import LinearRegression
-from datetime import timedelta
+import matplotlib.pyplot as plt
 import os
 
-# ----------------- Load Data -----------------
-file_path = "Prediction models/Linear Regression/data for prediction.csv"
-df = pd.read_csv(file_path)
+# --------- Paths and Constants ---------
+data_file = "Prediction models/Linear Regression/data for prediction.csv"
+status_file = "Prediction models/Linear Regression/last_prediction_date.txt"
+output_folder = "Prediction models/Linear Regression"
+plot_folder = os.path.join(output_folder, "prediction_plots")
+os.makedirs(output_folder, exist_ok=True)
+os.makedirs(plot_folder, exist_ok=True)
 
-# Ensure DATE is datetime
+# --------- Load and Prepare Data ---------
+df = pd.read_csv(data_file)
+df.columns = df.columns.str.strip()
 df["DATE"] = pd.to_datetime(df["DATE"])
+df = df.sort_values(["ATM", "DATE"])
 
-# Prepare result storage
-future_predictions = []
+# --------- Read Last Prediction Point ---------
+if os.path.exists(status_file):
+    with open(status_file, "r") as f:
+        last_date = pd.to_datetime(f.read().strip())
+else:
+    last_date = None
 
-# Process each ATM separately
-for atm in df["ATM"].unique():
-    atm_df = df[df["ATM"] == atm].copy()
-    atm_df = atm_df.sort_values("DATE")
+# --------- Parameters ---------
+prediction_horizon = 5
+features = ["DEPOSITS", "Day of the week", "Day in a month", "Month", "Year", "Holiday (Yes -1, No -0)"]
+default_atm_capacity = 20000000
 
-    # Features and target
-    features = ["Day of the week", "Day in a month", "Month", "Year", "Holiday (Yes -1, No -0)", "Avg daily withdrawal per ATM"]
-    target = "WITHDRWLS"
+# --------- Run Per ATM ---------
+prediction_results = []
+
+for atm_id, atm_df in df.groupby("ATM"):
+    atm_df = atm_df.copy().sort_values("DATE")
+    atm_df = atm_df.dropna(subset=features + ["WITHDRWLS"])
+
+    if last_date:
+        train_df = atm_df[atm_df["DATE"] <= last_date]
+        pred_df = atm_df[(atm_df["DATE"] > last_date)].head(prediction_horizon)
+    else:
+        train_df = atm_df.iloc[:-prediction_horizon]
+        pred_df = atm_df.iloc[-prediction_horizon:]
+
+    if len(pred_df) < prediction_horizon or len(train_df) < 5:
+        print(f"⚠️ Not enough data to predict for ATM {atm_id}. Skipping.")
+        continue
 
     # Train model
-    X = atm_df[features]
-    y = atm_df[target]
     model = LinearRegression()
-    model.fit(X, y)
+    model.fit(train_df[features], train_df["WITHDRWLS"])
 
     # Predict next 5 days
-    last_date = atm_df["DATE"].max()
-    for i in range(1, 6):
-        future_date = last_date + timedelta(days=i)
-        dow = future_date.weekday() + 1  # Monday = 1
-        dom = future_date.day
-        month = future_date.month
-        year = future_date.year
-        holiday = 0  # You can customize this if you have a holiday calendar
+    pred_df["Predicted_WITHDRWLS"] = model.predict(pred_df[features])
+    prediction_results.append(pred_df)
 
-        avg_withdrawal = atm_df["WITHDRWLS"].mean()
-        features_input = np.array([[dow, dom, month, year, holiday, avg_withdrawal]])
-        predicted_withdrawal = model.predict(features_input)[0]
+    # Plot actual vs predicted
+    plt.figure(figsize=(10, 5))
+    plt.plot(pred_df["DATE"], pred_df["WITHDRWLS"], marker='o', label="Actual")
+    plt.plot(pred_df["DATE"], pred_df["Predicted_WITHDRWLS"], marker='x', label="Predicted")
+    plt.title(f"ATM {atm_id} - Forecast for Next 5 Days")
+    plt.xlabel("Date")
+    plt.ylabel("WITHDRWLS")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_folder, f"ATM_{atm_id}_forecast_until_{pred_df['DATE'].max().date()}.png"))
+    plt.close()
 
-        # Recreate the full row structure
-        prediction_row = {
-            "CASHP_ID": f"Pred_{atm}_{i}",
-            "ATM": atm,
-            "DATE": future_date,
-            "WITHDRWLS": predicted_withdrawal,
-            "DEPOSITS": 0,  # Placeholder
-            "WITHDRWLS Scaled": predicted_withdrawal / atm_df["WITHDRWLS"].max(),
-            "DEPOSITS Scaled": 0,
-            "Day of the week": dow,
-            "Day in a month": dom,
-            "Month": month,
-            "Year": year,
-            "Date": f"{dom}-{month}-{year}",
-            "Holiday (Yes -1, No -0)": holiday,
-            "Avg daily withdrawal per ATM": avg_withdrawal
-        }
+# --------- Save Prediction Outputs ---------
+if prediction_results:
+    all_predictions = pd.concat(prediction_results)
 
-        future_predictions.append(prediction_row)
+    # Add DAY number (1–5) per ATM
+    all_predictions["DAY"] = all_predictions.groupby("ATM").cumcount() + 1
 
-# ----------------- Save Results -----------------
-pred_df = pd.DataFrame(future_predictions)
-pred_df.to_csv("Prediction models/Linear Regression/atm_withdrawal_predictions_5_days.csv", index=False)
-print("Predictions saved to atm_withdrawal_predictions_5_days.csv")
+    # Rename predicted column to match optimizer input
+    all_predictions["WITHDRWLS"] = all_predictions["Predicted_WITHDRWLS"]
+
+    # Add ATM capacity column for optimizer (static for now)
+    all_predictions["ATM capacity"] = default_atm_capacity
+
+    # Reorder columns (optional)
+    ordered_cols = ["ATM", "DATE", "DAY", "WITHDRWLS", "ATM capacity"]
+    other_cols = [col for col in all_predictions.columns if col not in ordered_cols]
+    all_predictions = all_predictions[ordered_cols + other_cols]
+
+    # Save output file
+    prediction_output = os.path.join(output_folder, "latest_prediction_output.csv")
+    all_predictions.to_csv(prediction_output, index=False)
+
+    # Update last prediction date
+    latest_date = all_predictions["DATE"].max()
+    with open(status_file, "w") as f:
+        f.write(str(latest_date.date()))
+
+    print(f"✅ Prediction completed up to {latest_date.date()}")
+    print(f"📁 Prediction file saved to: {prediction_output}")
+    print(f"📈 Forecast plots saved in: {plot_folder}")
+else:
+    print("🚫 No new prediction could be made (possibly at end of data).")
