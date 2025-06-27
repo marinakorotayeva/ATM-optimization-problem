@@ -148,4 +148,3 @@ for m in range(M):
     plt.grid(True)
     plt.savefig(f"Optimization model/atm_{m + 1}_refill_plot_all_weeks.png")
     plt.close()
-
