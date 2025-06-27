@@ -1,0 +1,131 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+
+# ----------------- File Paths -----------------
+input_file = "Prediction models/LSTM/data for prediction.csv"
+output_file = "Prediction models/LSTM/latest_prediction_output.csv"
+plot_dir = "Prediction models/LSTM/plots"
+os.makedirs(plot_dir, exist_ok=True)
+
+# ----------------- Load & Preprocess Data -----------------
+df = pd.read_csv(input_file, parse_dates=["DATE"])
+df = df.sort_values(by=["ATM", "DATE"])
+
+# Add time features
+df["WITHDRWLS Scaled"] = 0.0
+df["DEPOSITS Scaled"] = 0.0
+df["Day of the week"] = df["DATE"].dt.dayofweek
+df["Day in a month"] = df["DATE"].dt.day
+df["Month"] = df["DATE"].dt.month
+df["Year"] = df["DATE"].dt.year
+df["Date"] = df["DATE"].dt.strftime("%-d-%-m-%Y")
+
+# ----------------- Predict Next 5 Days -----------------
+atm_predictions = []
+
+atm_ids = df["ATM"].unique()
+for atm in atm_ids:
+    atm_df = df[df["ATM"] == atm].copy()
+
+    if len(atm_df) < 10:
+        print(f"⚠️ Not enough data for ATM {atm}. Skipping.")
+        continue
+
+    # Scale relevant columns
+    scaler_w = MinMaxScaler()
+    scaler_d = MinMaxScaler()
+    atm_df["WITHDRWLS Scaled"] = scaler_w.fit_transform(atm_df[["WITHDRWLS"]])
+    atm_df["DEPOSITS Scaled"] = scaler_d.fit_transform(atm_df[["DEPOSITS"]])
+
+    features = atm_df[["WITHDRWLS Scaled", "DEPOSITS Scaled", "Holiday (Yes -1, No -0)"]].values
+    sequence_length = 5
+
+    # Create sequences
+    X = []
+    y = []
+    for i in range(len(features) - sequence_length):
+        X.append(features[i:i + sequence_length])
+        y.append(features[i + sequence_length][0])
+    X = np.array(X)
+    y = np.array(y)
+
+    if len(X) < 1:
+        continue
+
+    # LSTM model
+    model = Sequential()
+    model.add(LSTM(50, input_shape=(X.shape[1], X.shape[2])))
+    model.add(Dense(1))
+    model.compile(loss="mse", optimizer="adam")
+    model.fit(X, y, epochs=50, batch_size=4, verbose=0)
+
+    # Forecast next 5 days
+    last_seq = features[-sequence_length:]
+    predictions_scaled = []
+    predictions_raw = []
+    for _ in range(5):
+        inp = last_seq.reshape(1, sequence_length, -1)
+        pred_scaled = model.predict(inp, verbose=0)[0][0]
+        predictions_scaled.append(pred_scaled)
+        predictions_raw.append([pred_scaled, last_seq[-1][1], last_seq[-1][2]])  # deposits, holiday stay fixed
+        last_seq = np.vstack((last_seq[1:], predictions_raw[-1]))
+
+    # Inverse scale WITHDRWLS
+    predicted_withdrawals = scaler_w.inverse_transform(np.array(predictions_scaled).reshape(-1, 1)).flatten()
+
+    # Prepare dates for next 5 days
+    last_date = atm_df["DATE"].max()
+    next_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=5)
+
+    # Build output DataFrame for this ATM
+    rows = []
+    for i in range(5):
+        row = {
+            "ATM": atm,
+            "DATE": next_dates[i],
+            "DAY": (atm_df["DAY"].max() if "DAY" in atm_df.columns else i + 1),
+            "WITHDRWLS": np.nan,
+            "ATM capacity": 20000000,  # ✅ Default capacity
+            "CASHP_ID": atm_df["CASHP_ID"].iloc[-1],
+            "DEPOSITS": scaler_d.inverse_transform([[predictions_raw[i][1]]])[0][0],
+            "WITHDRWLS Scaled": predictions_scaled[i],
+            "DEPOSITS Scaled": predictions_raw[i][1],
+            "Day of the week": next_dates[i].dayofweek,
+            "Day in a month": next_dates[i].day,
+            "Month": next_dates[i].month,
+            "Year": next_dates[i].year,
+            "Date": next_dates[i].strftime("%-d-%-m-%Y"),
+            "Holiday (Yes -1, No -0)": int(predictions_raw[i][2]),
+            "Avg daily withdrawal per ATM": atm_df["WITHDRWLS"].mean(),
+            "Predicted_WITHDRWLS": predicted_withdrawals[i]
+        }
+        rows.append(row)
+    prediction_df = pd.DataFrame(rows)
+    atm_predictions.append(prediction_df)
+
+    # ----------------- Plot Predictions Only -----------------
+    plt.figure(figsize=(10, 5))
+    plt.plot(next_dates, predicted_withdrawals, marker='o', linestyle='-', color='orange', label="Predicted")
+    plt.title(f"ATM {atm} - Forecast for Next 5 Days (Predicted Only)")
+    plt.xlabel("Date")
+    plt.ylabel("WITHDRWLS")
+    plt.xticks(rotation=45)
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"{plot_dir}/ATM_{atm}_predicted_only.png")
+    plt.close()
+
+# ----------------- Save Output -----------------
+if atm_predictions:
+    result_df = pd.concat(atm_predictions, ignore_index=True)
+    result_df.to_csv(output_file, index=False)
+    print(f"✅ 5-day predictions saved to: {output_file}")
+    print(f"📊 Plots saved in: {plot_dir}")
+else:
+    print("🚫 No predictions made due to insufficient data.")
