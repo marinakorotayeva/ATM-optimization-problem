@@ -59,9 +59,9 @@ param_distributions = {
     'max_depth': [3, 4, 5],
     'subsample': [0.6, 0.7, 0.8],
     'colsample_bytree': [0.6, 0.7, 0.8],
-    'reg_alpha': [1, 5, 10],
-    'reg_lambda': [5, 10, 15],
-    'gamma': [1, 3, 5]
+    'reg_alpha': [1, 5, 10],                    # L1 regularization term (Lasso). Adds penalty based on absolute value of weights, can push feature weights to zero.
+    'reg_lambda': [5, 10, 15],                  # L2 regularization term (Ridge). Adds penalty based on squared magnitude of weights, encourages smaller weights.
+    'gamma': [1, 3, 5]                          # Minimum loss reduction required to make a further partition. Higher values make the algorithm more conservative.
 }
 
 # Process each ATM
