@@ -53,44 +53,31 @@ features = [
 atms_to_analyze = data["ATM_NUMBER"].unique()
 print(f"Found {len(atms_to_analyze)} ATMs: {atms_to_analyze}")
 
-# Define time series cross-validator with 10 folds
+# Define time series cross-validator with 10 folds for the ENTIRE dataset
 tscv = TimeSeriesSplit(n_splits=10)
 
-# Function to prepare and split data for each ATM
+# Function to prepare data for each ATM (NO train/test split)
 def prepare_atm_data(atm_data, features):
     atm_data = atm_data.copy()
     atm_data.set_index('DATE', inplace=True)
     
-    # Filter by fixed date range
+    # Filter by fixed date range (use all available data)
     start_date = pd.to_datetime("2006-02-25")
     end_date = pd.to_datetime("2008-02-25")
     atm_data_filtered = atm_data.loc[start_date:end_date]
     
-    # Apply fixed train/test date split
-    train_cutoff = pd.to_datetime("2007-10-02")
-    test_start = pd.to_datetime("2007-10-03")
+    # Drop rows with missing values
+    atm_data_clean = atm_data_filtered.dropna(subset=features + ['ATM_WITHDRWLS'])
     
-    train = atm_data_filtered.loc[:train_cutoff]
-    test = atm_data_filtered.loc[test_start:]
+    if atm_data_clean.empty:
+        print(f"Warning: No data after cleaning for ATM")
+        return None, None, None, None
     
-    if train.empty or test.empty:
-        print(f"Warning: Empty train or test set for ATM")
-        return None, None, None, None, None, None
+    X = atm_data_clean[features]
+    y = atm_data_clean['ATM_WITHDRWLS'].values
+    dates = atm_data_clean.index
     
-    # Drop rows with missing values from each set independently
-    train_clean = train.dropna(subset=features + ['ATM_WITHDRWLS'])
-    test_clean = test.dropna(subset=features + ['ATM_WITHDRWLS'])
-    
-    if train_clean.empty or test_clean.empty:
-        print(f"Warning: Empty train or test set after dropping NA for ATM")
-        return None, None, None, None, None, None
-    
-    X_train = train_clean[features]
-    X_test = test_clean[features]
-    y_train = train_clean['ATM_WITHDRWLS'].values
-    y_test = test_clean['ATM_WITHDRWLS'].values
-    
-    return X_train, X_test, y_train, y_test, train_clean.index, test_clean.index
+    return X, y, dates
 
 # Store prepared data for all ATMs
 prepared_data = {}
@@ -99,20 +86,17 @@ successful_atms = 0
 print("Preparing data for each ATM...")
 for atm_num in atms_to_analyze:
     atm_data = data[data['ATM_NUMBER'] == atm_num].copy()
-    X_train, X_test, y_train, y_test, train_dates, test_dates = prepare_atm_data(atm_data, features)
+    X, y, dates = prepare_atm_data(atm_data, features)
     
-    if X_train is not None:
+    if X is not None:
         prepared_data[atm_num] = {
-            'X_train': X_train,
-            'X_test': X_test,
-            'y_train': y_train,
-            'y_test': y_test,
-            'train_dates': train_dates,
-            'test_dates': test_dates,
+            'X': X,
+            'y': y,
+            'dates': dates,
             'features': features
         }
         successful_atms += 1
-        print(f"  ATM {atm_num}: {len(X_train)} train samples, {len(X_test)} test samples")
+        print(f"  ATM {atm_num}: {len(X)} total samples")
     else:
         print(f"  ATM {atm_num}: Failed to prepare data")
 
@@ -124,7 +108,7 @@ with open("Prediction models/Data/prepared_data.pkl", "wb") as f:
 with open("Prediction models/Data/tscv.pkl", "wb") as f:
     pickle.dump(tscv, f)
 
-print("\nData preparation completed!")
+print("\nData preparation for Cross-Validation completed!")
 print(f"Successfully prepared data for {successful_atms}/{len(atms_to_analyze)} ATMs")
 print(f"Data saved in: Prediction models/Data/")
 
@@ -132,7 +116,5 @@ print(f"Data saved in: Prediction models/Data/")
 if prepared_data:
     first_atm = list(prepared_data.keys())[0]
     print(f"\nSample statistics for ATM {first_atm}:")
-    print(f"  Training period: {prepared_data[first_atm]['train_dates'].min()} to {prepared_data[first_atm]['train_dates'].max()}")
-    print(f"  Testing period:  {prepared_data[first_atm]['test_dates'].min()} to {prepared_data[first_atm]['test_dates'].max()}")
-    print(f"  Training samples: {len(prepared_data[first_atm]['X_train'])}")
-    print(f"  Testing samples:  {len(prepared_data[first_atm]['X_test'])}")
+    print(f"  Total period: {prepared_data[first_atm]['dates'].min()} to {prepared_data[first_atm]['dates'].max()}")
+    print(f"  Total samples: {len(prepared_data[first_atm]['X'])}")
