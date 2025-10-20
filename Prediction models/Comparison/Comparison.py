@@ -30,7 +30,7 @@ except FileNotFoundError:
 
 try:
     # Load LSTM results
-    lstm_results = pd.read_csv("Prediction models/LSTM/results/lstm_cv_results.csv")
+    lstm_results = pd.read_csv("Prediction models/LSTM/results/LSTM_CV_summary.csv")
     lstm_results['Model'] = 'LSTM'
     print("✓ Loaded LSTM results")
 except FileNotFoundError:
