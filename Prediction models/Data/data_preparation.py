@@ -1,120 +1,157 @@
-import pandas as pd
-import numpy as np
+#!/usr/bin/env python3
 import os
-from sklearn.model_selection import TimeSeriesSplit
+import numpy as np
+import pandas as pd
 import pickle
+from sklearn.preprocessing import StandardScaler
 
-# Create directories if they don't exist
+# ===============================================================
+# CONFIG
+# ===============================================================
 os.makedirs("Prediction models/Data", exist_ok=True)
+INPUT_CSV = "Prediction models/data_5_atms.csv"
+OUTPUT_PKL = "Prediction models/Data/prepared_global_data.pkl"
 
-# Load dataset
-file_path = "Prediction models/data.csv"
-data = pd.read_csv(file_path)
-data['DATE'] = pd.to_datetime(data['DATE'], dayfirst=True, errors='coerce')
-data.sort_values(by=['ATM_NUMBER', 'DATE'], inplace=True)
+# ===============================================================
+# LOAD DATA
+# ===============================================================
+print("📂 Loading dataset...")
+df = pd.read_csv(INPUT_CSV, sep=None, engine="python")
 
-# Feature Engineering - CORRECTED to avoid data leakage
-def add_features(df):
-    df = df.copy()
-    for atm in df['ATM_NUMBER'].unique():
-        atm_mask = df['ATM_NUMBER'] == atm
-        
-        # Lag features (1-day and 1-week)
-        df.loc[atm_mask, 'ATM_WITHDRWLS_1DAYAGO'] = df.loc[atm_mask, 'ATM_WITHDRWLS'].shift(1)
-        df.loc[atm_mask, 'ATM_WITHDRWLS_7DAYAGO'] = df.loc[atm_mask, 'ATM_WITHDRWLS'].shift(7)
-        
-        # CORRECTED: Calculate rolling stats and shift by 1 to avoid data leakage
-        # The value for day 't' will be the rolling mean of days 't-7' to 't-1'
-        rolling_mean = df.loc[atm_mask, 'ATM_WITHDRWLS'].rolling(window=7, min_periods=1).mean()
-        rolling_std = df.loc[atm_mask, 'ATM_WITHDRWLS'].rolling(window=7, min_periods=1).std()
-        
-        # Shift the result by 1 to avoid data leakage
-        df.loc[atm_mask, 'ROLLING_MEAN_7D'] = rolling_mean.shift(1)
-        df.loc[atm_mask, 'ROLLING_STD_7D'] = rolling_std.shift(1)
-    
-    return df
+# Parse and sort
+df["DATE"] = pd.to_datetime(df["DATE"], dayfirst=True, errors="coerce")
+df = df.sort_values(by=["ATM_ID", "DATE"]).reset_index(drop=True)
+df["HOLIDAY"] = df["HOLIDAY"].astype(int)
 
-print("Adding features...")
-data = add_features(data)
+# ===============================================================
+# LOG TRANSFORM TARGET
+# ===============================================================
+# Add log-transformed withdrawals
+df["WITHDRWLS_LOG"] = np.log1p(df["WITHDRWLS"])
 
-# Define features
-features = [
-    'ATM_WITHDRWLS_1DAYAGO',
-    'ATM_WITHDRWLS_7DAYAGO',
-    'ROLLING_MEAN_7D',
-    'ROLLING_STD_7D',
-    'HOLIDAY',
-    'DAY_OF_WEEK',
-    'IsSaturday',
-    'IsSunday'
+# ===============================================================
+# FEATURE ENGINEERING
+# ===============================================================
+def engineer_features(data: pd.DataFrame) -> pd.DataFrame:
+    results = []
+
+    for atm_id, atm_df in data.groupby("ATM_ID"):
+        atm_df = atm_df.copy().sort_values("DATE")
+
+        # Lag features (log space)
+        for lag in [1, 2, 3, 7, 14, 30]:
+            atm_df[f"LAG{lag}"] = atm_df["WITHDRWLS_LOG"].shift(lag)
+
+        # Rolling statistics (log space)
+        for w in [3, 7, 14, 30]:
+            atm_df[f"ROLL_MEAN_{w}"] = atm_df["WITHDRWLS_LOG"].rolling(w, min_periods=1).mean().shift(1)
+            atm_df[f"ROLL_STD_{w}"] = atm_df["WITHDRWLS_LOG"].rolling(w, min_periods=1).std().shift(1)
+
+        # Relative change features
+        atm_df["DIFF_1"] = atm_df["WITHDRWLS_LOG"].diff().shift(1)
+        atm_df["DIFF_7"] = atm_df["WITHDRWLS_LOG"].diff(7).shift(1)
+
+        # Relative to 30-day mean
+        rolling_mean_30 = atm_df["WITHDRWLS_LOG"].rolling(30, min_periods=5).mean().shift(1)
+        atm_df["REL_TO_MEAN_30"] = atm_df["WITHDRWLS_LOG"] / rolling_mean_30
+        atm_df["REL_TO_MEAN_30"].replace([np.inf, -np.inf], 1, inplace=True)
+        atm_df["REL_TO_MEAN_30"].fillna(1, inplace=True)
+
+        # Calendar features
+        atm_df["DAY_OF_WEEK"] = atm_df["DATE"].dt.dayofweek
+        atm_df["DAY_IN_MONTH"] = atm_df["DATE"].dt.day
+        atm_df["MONTH"] = atm_df["DATE"].dt.month
+        atm_df["IsWeekend"] = atm_df["DAY_OF_WEEK"].isin([5, 6]).astype(int)
+
+        # Cyclical encoding
+        atm_df["DOW_SIN"] = np.sin(2 * np.pi * atm_df["DAY_OF_WEEK"] / 7)
+        atm_df["DOW_COS"] = np.cos(2 * np.pi * atm_df["DAY_OF_WEEK"] / 7)
+        atm_df["MONTH_SIN"] = np.sin(2 * np.pi * atm_df["MONTH"] / 12)
+        atm_df["MONTH_COS"] = np.cos(2 * np.pi * atm_df["MONTH"] / 12)
+
+        # Holiday lags
+        atm_df["HOLIDAY_LAG1"] = atm_df["HOLIDAY"].shift(1)
+        atm_df["HOLIDAY_LAG2"] = atm_df["HOLIDAY"].shift(2)
+        atm_df["HOLIDAY_ROLL7"] = atm_df["HOLIDAY"].rolling(7, min_periods=1).sum().shift(1)
+
+        results.append(atm_df)
+
+    return pd.concat(results, axis=0)
+
+print("⚙️ Engineering features...")
+df = engineer_features(df)
+
+# ===============================================================
+# CLEAN DATA
+# ===============================================================
+# Drop rows with NaNs caused by lag/rolling
+df = df.dropna().reset_index(drop=True)
+
+# ===============================================================
+# FEATURE SELECTION
+# ===============================================================
+FEATURES = [
+    # Lag & rolling
+    "LAG1", "LAG2", "LAG3", "LAG7", "LAG14", "LAG30",
+    "ROLL_MEAN_3", "ROLL_STD_3",
+    "ROLL_MEAN_7", "ROLL_STD_7",
+    "ROLL_MEAN_14", "ROLL_STD_14",
+    "ROLL_MEAN_30", "ROLL_STD_30",
+    # Relative
+    "DIFF_1", "DIFF_7", "REL_TO_MEAN_30",
+    # Calendar
+    "DAY_OF_WEEK", "DAY_IN_MONTH", "MONTH", "IsWeekend",
+    # Cyclical
+    "DOW_SIN", "DOW_COS", "MONTH_SIN", "MONTH_COS",
+    # Holiday
+    "HOLIDAY", "HOLIDAY_LAG1", "HOLIDAY_LAG2", "HOLIDAY_ROLL7"
 ]
 
-# ATMs to analyze
-atms_to_analyze = data["ATM_NUMBER"].unique()
-print(f"Found {len(atms_to_analyze)} ATMs: {atms_to_analyze}")
+TARGET = "WITHDRWLS_LOG"
 
-# Define time series cross-validator with 10 folds for the ENTIRE dataset
-tscv = TimeSeriesSplit(n_splits=10)
+# ===============================================================
+# SCALE PER ATM
+# ===============================================================
+scaled_frames = []
+scalers = {}
 
-# Function to prepare data for each ATM (NO train/test split)
-def prepare_atm_data(atm_data, features):
-    atm_data = atm_data.copy()
-    atm_data.set_index('DATE', inplace=True)
-    
-    # Filter by fixed date range (use all available data)
-    start_date = pd.to_datetime("2006-02-25")
-    end_date = pd.to_datetime("2008-02-25")
-    atm_data_filtered = atm_data.loc[start_date:end_date]
-    
-    # Drop rows with missing values
-    atm_data_clean = atm_data_filtered.dropna(subset=features + ['ATM_WITHDRWLS'])
-    
-    if atm_data_clean.empty:
-        print(f"Warning: No data after cleaning for ATM")
-        return None, None, None, None
-    
-    X = atm_data_clean[features]
-    y = atm_data_clean['ATM_WITHDRWLS'].values
-    dates = atm_data_clean.index
-    
-    return X, y, dates
+print("📊 Scaling per ATM...")
 
-# Store prepared data for all ATMs
-prepared_data = {}
-successful_atms = 0
+for atm_id, atm_df in df.groupby("ATM_ID"):
+    atm_df = atm_df.copy().sort_values("DATE")
 
-print("Preparing data for each ATM...")
-for atm_num in atms_to_analyze:
-    atm_data = data[data['ATM_NUMBER'] == atm_num].copy()
-    X, y, dates = prepare_atm_data(atm_data, features)
-    
-    if X is not None:
-        prepared_data[atm_num] = {
-            'X': X,
-            'y': y,
-            'dates': dates,
-            'features': features
-        }
-        successful_atms += 1
-        print(f"  ATM {atm_num}: {len(X)} total samples")
-    else:
-        print(f"  ATM {atm_num}: Failed to prepare data")
+    # Target scaler
+    y_scaler = StandardScaler()
+    atm_df["TARGET_SCALED"] = y_scaler.fit_transform(atm_df[[TARGET]])
 
-# Save the prepared data
-with open("Prediction models/Data/prepared_data.pkl", "wb") as f:
-    pickle.dump(prepared_data, f)
+    # Feature scaler
+    X_scaler = StandardScaler()
+    atm_df[FEATURES] = X_scaler.fit_transform(atm_df[FEATURES])
 
-# Save the cross-validator
-with open("Prediction models/Data/tscv.pkl", "wb") as f:
-    pickle.dump(tscv, f)
+    scalers[atm_id] = {"y_scaler": y_scaler, "X_scaler": X_scaler}
+    scaled_frames.append(atm_df)
 
-print("\nData preparation for Cross-Validation completed!")
-print(f"Successfully prepared data for {successful_atms}/{len(atms_to_analyze)} ATMs")
-print(f"Data saved in: Prediction models/Data/")
+df_scaled = pd.concat(scaled_frames).reset_index(drop=True)
 
-# Show sample statistics for the first ATM
-if prepared_data:
-    first_atm = list(prepared_data.keys())[0]
-    print(f"\nSample statistics for ATM {first_atm}:")
-    print(f"  Total period: {prepared_data[first_atm]['dates'].min()} to {prepared_data[first_atm]['dates'].max()}")
-    print(f"  Total samples: {len(prepared_data[first_atm]['X'])}")
+# ===============================================================
+# SAVE OUTPUT
+# ===============================================================
+prepared_global_data = {
+    "data": df_scaled,
+    "features": FEATURES,
+    "target": "TARGET_SCALED",
+    "ATM_IDs": df_scaled["ATM_ID"].unique().tolist(),
+    "scalers": scalers
+}
+
+with open(OUTPUT_PKL, "wb") as f:
+    pickle.dump(prepared_global_data, f)
+
+print("\n✅ Data preparation completed successfully!")
+print(f"Total ATMs: {len(prepared_global_data['ATM_IDs'])}")
+print(f"Total samples: {len(df_scaled)}")
+print(f"Features: {len(FEATURES)}")
+print("📁 Saved →", OUTPUT_PKL)
+
+
+
