@@ -127,12 +127,12 @@ target = prepared["target"]           # "TARGET_SCALED" → standardized LOG tar
 scalers = prepared["scalers"]         # per-ATM scalers; y_scaler is on LOG target
 ATM_IDs = prepared["ATM_IDs"]
 
-print(f"✅ Loaded {len(data)} samples from {len(ATM_IDs)} ATMs.")
+print(f"Loaded {len(data)} samples from {len(ATM_IDs)} ATMs.")
 
-print("📁 Loading pre-generated CV splits...")
+print("Loading pre-generated CV splits...")
 with open(TSCV_PATH, "rb") as f:
     tscv_splits = pickle.load(f)
-print(f"✅ Loaded CV splits for {len(tscv_splits)} ATMs.")
+print(f"Loaded CV splits for {len(tscv_splits)} ATMs.")
 
 # ===============================================================
 # PER-ATM CROSS-VALIDATION (LOG units)
@@ -144,13 +144,13 @@ print("\n🔁 Starting per-ATM TimeSeries Cross-Validation (BiLSTM, log-scaled u
 
 for atm_id in ATM_IDs:
     if atm_id not in tscv_splits:
-        print(f"⚠️ No CV splits found for ATM {atm_id}, skipping.")
+        print(f"No CV splits found for ATM {atm_id}, skipping.")
         continue
 
     atm_df = data[data["ATM_ID"] == atm_id].copy().reset_index(drop=True)
 
     if len(atm_df) < SEQ_LEN + 50:
-        print(f"🏧 ATM: {atm_id} — ⚠️ Skipping (too few samples)")
+        print(f"🏧 ATM: {atm_id} — Skipping (too few samples)")
         continue
 
     print(f"🏧 ATM: {atm_id}")
@@ -174,7 +174,7 @@ for atm_id in ATM_IDs:
         X_test,  y_test  = X_all[test_idx],  y_all[test_idx]
 
         if len(X_test) <= SEQ_LEN or len(X_train) <= SEQ_LEN:
-            print(f"   ⚠️ Fold {fold}: segment too short for SEQ_LEN={SEQ_LEN}, skipping.")
+            print(f"   Fold {fold}: segment too short for SEQ_LEN={SEQ_LEN}, skipping.")
             continue
 
         # Build sequences
@@ -248,8 +248,8 @@ cv_results_df = pd.DataFrame(overall_rows)
 cv_results_path = os.path.join(RESULTS_DIR, "LSTM_per_ATM_results.csv")
 cv_results_df.to_csv(cv_results_path, index=False)
 
-print("\n📁 Saved CV predictions  →", pred_path)
-print("📁 Saved CV per-ATM stats →", cv_results_path)
+print("\nSaved CV predictions  →", pred_path)
+print("Saved CV per-ATM stats →", cv_results_path)
 
 
 
@@ -320,8 +320,8 @@ full_df = pd.DataFrame(full_rows)
 full_path = os.path.join(RESULTS_DIR, "LSTM_full_evaluation.csv")
 full_df.to_csv(full_path, index=False)
 
-print("📁 Saved full continuous predictions →", full_pred_path)
-print("📁 Saved full-data evaluation →", full_path)
+print("Saved full continuous predictions →", full_pred_path)
+print("Saved full-data evaluation →", full_path)
 
 # ===============================================================
 # 📈 GRAPHS: FULL continuous (LOG)
@@ -372,7 +372,7 @@ if not full_pred_df.empty:
         plt.savefig(os.path.join(GRAPHS_DIR, f"{atm_id}_FULL_residual_scatter_log.png"))
         plt.close()
 else:
-    print("\n⚠️ No full predictions produced → FULL graphs skipped.")
+    print("\n No full predictions produced → FULL graphs skipped.")
 
 # ===============================================================
 # OVERALL SUMMARY ACROSS ATMs (CV means)
@@ -391,9 +391,9 @@ if not cv_results_df.empty:
     summary_path = os.path.join(RESULTS_DIR, "LSTM_CV_summary.csv")
     pd.DataFrame([summary]).to_csv(summary_path, index=False)
 
-    print("\n✅ Final Cross-Validation Summary (saved):")
+    print("\n Final Cross-Validation Summary (saved):")
     for k, v in summary.items():
         print(f"{k}: {v:.4f}" if isinstance(v, (float, np.floating)) else f"{k}: {v}")
 else:
-    print("\n⚠️ CV results were empty, summary not written.")
+    print("\n CV results were empty, summary not written.")
 
