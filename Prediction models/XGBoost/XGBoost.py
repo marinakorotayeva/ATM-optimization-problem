@@ -41,7 +41,7 @@ def format_dates(ax):
 # ===============================================================
 # LOAD DATA
 # ===============================================================
-print("📂 Loading prepared data...")
+print("Loading prepared data...")
 with open(DATA_PATH, "rb") as f:
     prepared = pickle.load(f)
 data = prepared["data"]
@@ -50,12 +50,12 @@ target = prepared["target"]
 ATM_IDs = prepared["ATM_IDs"]
 scalers = prepared["scalers"]
 
-print(f"✅ Loaded {len(data)} samples across {len(ATM_IDs)} ATMs")
+print(f"Loaded {len(data)} samples across {len(ATM_IDs)} ATMs")
 
-print("📁 Loading TimeSeries CV splits...")
+print("Loading TimeSeries CV splits...")
 with open(TSCV_PATH, "rb") as f:
     tscv_splits = pickle.load(f)
-print(f"✅ Loaded CV splits for {len(tscv_splits)} ATMs")
+print(f"Loaded CV splits for {len(tscv_splits)} ATMs")
 
 # ===============================================================
 # PER-ATM TIME SERIES CV
@@ -67,12 +67,12 @@ print("\n🔁 Starting per-ATM XGBoost time series CV...\n")
 
 for atm_id in ATM_IDs:
     if atm_id not in tscv_splits:
-        print(f"⚠️ ATM {atm_id}: no CV splits found, skipping.")
+        print(f"ATM {atm_id}: no CV splits found, skipping.")
         continue
 
     atm_df = data[data["ATM_ID"] == atm_id].copy().sort_values("DATE").reset_index(drop=True)
     if len(atm_df) < 200:
-        print(f"⚠️ ATM {atm_id}: too few samples, skipping.")
+        print(f"ATM {atm_id}: too few samples, skipping.")
         continue
 
     print(f"🏧 Processing ATM {atm_id} ({len(atm_df)} samples)")
@@ -155,12 +155,12 @@ for atm_id in ATM_IDs:
 cv_results_df = pd.DataFrame(results)
 cv_results_path = os.path.join(RESULTS_DIR, "XGBoost_per_ATM_CV_results.csv")
 cv_results_df.to_csv(cv_results_path, index=False)
-print(f"\n📁 Saved CV results → {cv_results_path}")
+print(f"\nSaved CV results → {cv_results_path}")
 
 preds_df = pd.DataFrame(all_preds)
 preds_path = os.path.join(PREDICTIONS_DIR, "XGBoost_CV_predictions.csv")
 preds_df.to_csv(preds_path, index=False)
-print(f"📁 Saved CV predictions → {preds_path}")
+print(f"Saved CV predictions → {preds_path}")
 
 # ===============================================================
 # FINAL FULL-DATA TRAIN + GRAPHS
@@ -236,5 +236,5 @@ for atm_id in ATM_IDs:
 pd.DataFrame(full_results).to_csv(os.path.join(RESULTS_DIR, "XGBoost_full_results.csv"), index=False)
 pd.DataFrame(full_preds).to_csv(os.path.join(PREDICTIONS_DIR, "XGBoost_full_predictions.csv"), index=False)
 
-print("\n✅ XGBoost modeling completed successfully!")
+print("\nXGBoost modeling completed successfully")
 print(f"Results saved to {OUTPUT_DIR}")
