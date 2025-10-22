@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3 
 import os
 import pickle
 import numpy as np
@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from xgboost import XGBRegressor
+import shap
 
 # ===============================================================
 # CONFIG
@@ -19,10 +20,15 @@ OUTPUT_DIR = "Prediction models/XGBoost"
 RESULTS_DIR = os.path.join(OUTPUT_DIR, "results")
 PREDICTIONS_DIR = os.path.join(OUTPUT_DIR, "predictions")
 GRAPHS_DIR = os.path.join(OUTPUT_DIR, "graphs")
+SHAP_DIR = os.path.join(OUTPUT_DIR, "shap")
+FEATURE_IMPORTANCE_DIR = os.path.join(OUTPUT_DIR, "feature_importance")
 
+# Create all output folders
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(PREDICTIONS_DIR, exist_ok=True)
 os.makedirs(GRAPHS_DIR, exist_ok=True)
+os.makedirs(SHAP_DIR, exist_ok=True)
+os.makedirs(FEATURE_IMPORTANCE_DIR, exist_ok=True)
 
 # ===============================================================
 # UTILS
@@ -97,7 +103,6 @@ for atm_id in ATM_IDs:
         if len(X_train) < 30 or len(X_test) < 10:
             continue
 
-        # Train model
         model = XGBRegressor(
             n_estimators=500,
             learning_rate=0.05,
@@ -109,21 +114,16 @@ for atm_id in ATM_IDs:
         )
         model.fit(X_train, y_train, verbose=False)
 
-        # Predict (still in scaled log space)
         y_pred_scaled = model.predict(X_test)
-
-        # Convert to log units (inverse of scaler)
         y_true_log = y_scaler.inverse_transform(y_test.reshape(-1, 1)).ravel()
         y_pred_log = y_scaler.inverse_transform(y_pred_scaled.reshape(-1, 1)).ravel()
 
-        # Metrics
         rmse = math.sqrt(mean_squared_error(y_true_log, y_pred_log))
         mae = mean_absolute_error(y_true_log, y_pred_log)
         smape = smape_numpy(y_true_log, y_pred_log)
         fold_metrics.append((rmse, mae, smape))
         print(f"   🔹 Fold {fold} → RMSE={rmse:.3f}, MAE={mae:.3f}, SMAPE={smape:.2f}%")
 
-        # Save predictions
         for d, yt, yp in zip(test_dates, y_true_log, y_pred_log):
             fold_preds.append({
                 "ATM_ID": atm_id,
@@ -134,7 +134,6 @@ for atm_id in ATM_IDs:
                 "Residual_LOG": yp - yt
             })
 
-    # Aggregate CV metrics
     if fold_metrics:
         rmses, maes, smapes = zip(*fold_metrics)
         results.append({
@@ -163,11 +162,12 @@ preds_df.to_csv(preds_path, index=False)
 print(f"Saved CV predictions → {preds_path}")
 
 # ===============================================================
-# FINAL FULL-DATA TRAIN + GRAPHS
+# FINAL FULL-DATA TRAIN + GRAPHS + SHAP + FEATURE IMPORTANCE
 # ===============================================================
 print("\n🔁 Training final models on full data (for each ATM)...")
 full_results = []
 full_preds = []
+shap_results = []
 
 for atm_id in ATM_IDs:
     atm_df = data[data["ATM_ID"] == atm_id].copy().sort_values("DATE").reset_index(drop=True)
@@ -222,19 +222,68 @@ for atm_id in ATM_IDs:
     plt.close()
 
     plt.figure(figsize=(12, 4))
-    plt.plot(dates_all, y_pred_log - y_true_log)
+    residuals = y_pred_log - y_true_log
+    plt.plot(dates_all, residuals, color="steelblue", linewidth=1)
     plt.axhline(0, color="black", linestyle="--")
+
+    # ✅ Set consistent y-axis limits
+    plt.ylim(-0.05, 0.05)
+
     plt.title(f"ATM {atm_id} – Residuals Over Time (Scaled)")
-    plt.xlabel("Date"); plt.ylabel("Residual (Pred - Actual)")
-    plt.grid(True); format_dates(plt.gca()); plt.tight_layout()
+    plt.xlabel("Date")
+    plt.ylabel("Residual (Pred - Actual)")
+    plt.grid(True)
+    format_dates(plt.gca())
+    plt.tight_layout()
     plt.savefig(os.path.join(GRAPHS_DIR, f"{atm_id}_residuals.png"))
     plt.close()
 
+
+    # === SHAP METRICS ===
+    print(f"   🧭 Computing SHAP values for ATM {atm_id}...")
+    explainer = shap.Explainer(model.predict, X_all)
+    shap_values = explainer(X_all)
+    mean_abs_shap = np.abs(shap_values.values).mean(axis=0)
+
+    shap.summary_plot(shap_values.values, X_all, feature_names=features, show=False)
+    plt.tight_layout()
+    plt.savefig(os.path.join(SHAP_DIR, f"{atm_id}_shap_summary.png"))
+    plt.close()
+
+    shap_results.extend([
+        {"ATM_ID": atm_id, "Feature": f, "MeanAbsSHAP": v}
+        for f, v in zip(features, mean_abs_shap)
+    ])
+
+
+    # === XGBOOST FEATURE IMPORTANCE ===
+    print(f"   📊 Computing XGBoost feature importance for ATM {atm_id}...")
+    booster = model.get_booster()
+    fmap = {f"f{i}": features[i] for i in range(len(features))}
+    importance = booster.get_score(importance_type='gain')
+    importance_named = {fmap.get(k, k): v for k, v in importance.items()}
+
+    sorted_features = sorted(importance_named.items(), key=lambda x: x[1], reverse=True)
+    feature_names_sorted = [f for f, _ in sorted_features]
+    importance_values_sorted = [v for _, v in sorted_features]
+
+    plt.figure(figsize=(8, 10))
+    plt.barh(feature_names_sorted[::-1], importance_values_sorted[::-1])
+    plt.xlabel("XGBoost Feature Importance (Gain)")
+    plt.title(f"ATM {atm_id} — Feature Importance (XGBoost)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(FEATURE_IMPORTANCE_DIR, f"{atm_id}_xgboost_feature_importance.png"))
+    plt.close()
+
 # ===============================================================
-# SAVE FULL RESULTS
+# SAVE FULL RESULTS + SHAP
 # ===============================================================
 pd.DataFrame(full_results).to_csv(os.path.join(RESULTS_DIR, "XGBoost_full_results.csv"), index=False)
 pd.DataFrame(full_preds).to_csv(os.path.join(PREDICTIONS_DIR, "XGBoost_full_predictions.csv"), index=False)
+pd.DataFrame(shap_results).to_csv(os.path.join(RESULTS_DIR, "XGBoost_SHAP_feature_importance.csv"), index=False)
 
-print("\nXGBoost modeling completed successfully")
+print("\n✅ XGBoost modeling completed successfully")
 print(f"Results saved to {OUTPUT_DIR}")
+print(f"SHAP plots → {SHAP_DIR}")
+print(f"Feature importance plots → {FEATURE_IMPORTANCE_DIR}")
+
