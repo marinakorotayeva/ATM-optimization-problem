@@ -51,19 +51,19 @@ def run_optimization(model_name: str, pred_file: str):
 
     # --- Load forecast data ---
     if not os.path.exists(pred_file):
-        print(f"❌ File not found: {pred_file}")
+        print(f"File not found: {pred_file}")
         return
 
     df = pd.read_csv(pred_file)
     df["Week_Start"] = pd.to_datetime(df["Week_Start"], errors="coerce")
     df = df.dropna(subset=["Week_Start"]).sort_values(["ATM_ID", "Week_Start", "Horizon"]).reset_index(drop=True)
 
-    # ✅ Convert predicted withdrawals from log-scale to real-scale if necessary
+    # Convert predicted withdrawals from log-scale to real-scale if necessary
     if df["Predicted"].mean() < 100:  # heuristic check for log-space
-        print("🔁 Detected log-scale predictions — converting with exp(x) - 1 ...")
+        print("Detected log-scale predictions — converting with exp(x) - 1 ...")
         df["Predicted"] = np.exp(df["Predicted"]) - 1
     else:
-        print("✅ Predictions already in real cash scale.")
+        print("Predictions already in real cash scale.")
 
     # Convert horizons (1–7) to actual dates
     df["Date"] = df["Week_Start"] + pd.to_timedelta(df["Horizon"] - 1, unit="D")
@@ -188,7 +188,7 @@ def run_optimization(model_name: str, pred_file: str):
             week_cost += atm_cost
             initial_stocks[atm] = value(s[m][T - 1])
 
-        print(f"💰 Total weekly cost ({model_name}): {week_cost:,.2f}")
+        print(f"Total weekly cost ({model_name}): {week_cost:,.2f}")
 
     # ============================================================
     # SAVE RESULTS + METRICS
@@ -221,7 +221,7 @@ def run_optimization(model_name: str, pred_file: str):
     last_stock.columns = ["ATM", "Stock"]
     last_stock.to_csv(stock_file, index=False)
 
-    print(f"✅ Results saved for {model_name} → {csv_path}")
+    print(f"Results saved for {model_name} → {csv_path}")
 
     # ============================================================
     # PLOTS PER ATM (IMPROVED)
@@ -236,7 +236,7 @@ def run_optimization(model_name: str, pred_file: str):
         refill = atm_df["Refill_Amount"]
         stock = atm_df["Stock"]
 
-        fig, ax1 = plt.subplots(figsize=(16, 5))  # ⬅️ Wider figure for readability
+        fig, ax1 = plt.subplots(figsize=(16, 5))  #Wider figure for readability
         ax1.bar(dates, refill, color="tab:blue", alpha=0.6, width=2)
         ax1.set_ylabel("Refill Amount", color="tab:blue")
         ax1.tick_params(axis="y", labelcolor="tab:blue")
@@ -257,7 +257,7 @@ def run_optimization(model_name: str, pred_file: str):
         plt.savefig(os.path.join(model_dir, f"ATM_{atm}_{model_name}_refill_plot.png"), bbox_inches="tight", dpi=150)
         plt.close()
 
-    print(f"✅ Improved plots saved for {model_name}")
+    print(f"Improved plots saved for {model_name}")
 
 
 # ============================================================
@@ -266,4 +266,4 @@ def run_optimization(model_name: str, pred_file: str):
 for model_name, path in MODEL_PATHS.items():
     run_optimization(model_name, path)
 
-print("\n🎯 Optimization completed for all forecasting models!")
+print("\nOptimization completed for all forecasting models!")
