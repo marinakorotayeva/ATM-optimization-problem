@@ -18,7 +18,7 @@ TSCV_PKL   = "Prediction models/Data/tscv_weekly.pkl"
 # ===============================================================
 # LOAD & CLEAN
 # ===============================================================
-print("📂 Loading dataset...")
+print("Loading dataset...")
 df = pd.read_csv(INPUT_CSV, sep=None, engine="python")
 df["DATE"] = pd.to_datetime(df["DATE"], dayfirst=True, errors="coerce")
 df = df.sort_values(["ATM_ID", "DATE"]).reset_index(drop=True)
@@ -34,7 +34,7 @@ df["Week"] = df["DATE"].dt.isocalendar().week.astype(int)
 # ===============================================================
 # AGGREGATE WEEKLY FEATURES
 # ===============================================================
-print("🧮 Aggregating weekly data...")
+print("Aggregating weekly data...")
 weekly_parts = []
 for atm_id, sub in df.groupby("ATM_ID"):
     sub = sub.copy()
@@ -62,7 +62,7 @@ weekly_df = pd.concat(weekly_parts, axis=0).sort_values(["ATM_ID", "WEEK_START"]
 # ===============================================================
 # GENERATE FUTURE TARGETS
 # ===============================================================
-print("🎯 Generating next-week (7-day) targets...")
+print("Generating next-week (7-day) targets...")
 df["Week_Start"] = df["DATE"] - pd.to_timedelta(df["DATE"].dt.dayofweek, unit="D")
 
 targets = []
@@ -91,7 +91,7 @@ df_final = pd.merge(weekly_df, targets_df, on=["ATM_ID", "WEEK_START"], how="inn
 # ===============================================================
 # ADD TIME-SERIES FEATURES
 # ===============================================================
-print("🧩 Adding lag & rolling features...")
+print("Adding lag & rolling features...")
 
 def add_time_features(df):
     df = df.sort_values("WEEK_START").copy()
@@ -144,7 +144,7 @@ df_scaled = pd.concat(scaled_frames, axis=0).sort_values(["ATM_ID", "WEEK_START"
 # ===============================================================
 # TIME SERIES SPLITS
 # ===============================================================
-print("🔁 Generating weekly TimeSeriesSplit folds...")
+print("Generating weekly TimeSeriesSplit folds...")
 tscv_splits = {}
 tscv = TimeSeriesSplit(n_splits=5)
 
@@ -171,7 +171,7 @@ with open(OUTPUT_PKL, "wb") as f:
 with open(TSCV_PKL, "wb") as f:
     pickle.dump(tscv_splits, f)
 
-print("\n✅ Enhanced weekly data preparation completed successfully!")
+print("\nEnhanced weekly data preparation completed successfully!")
 print(f"Features: {len(feature_cols)} → {feature_cols[:10]} ...")
 print(f"Saved → {OUTPUT_PKL}")
 print(f"CV Splits → {TSCV_PKL}")
