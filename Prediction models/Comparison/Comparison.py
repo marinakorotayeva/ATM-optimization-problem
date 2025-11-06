@@ -14,7 +14,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ==========================================
 # LOAD MODEL RESULTS
 # ==========================================
-print("📂 Loading model results...")
+print("Loading model results...")
 
 # ---- Linear Regression ----
 lr_path = "Prediction models/Linear Regression/results/LR_weekly_CV_results_mean.csv"
@@ -27,7 +27,7 @@ lr.rename(columns={
     "CV_MAE_Hmean": "MAE",
     "CV_SMAPE_Hmean": "SMAPE"
 }, inplace=True)
-print("✅ Loaded Linear Regression results")
+print("Loaded Linear Regression results")
 
 # ---- XGBoost ----
 xgb_path = "Prediction models/XGBoost/results/XGBoost_weekly_CV_results_mean.csv"
@@ -40,7 +40,7 @@ xgb.rename(columns={
     "CV_MAE_Hmean": "MAE",
     "CV_SMAPE_Hmean": "SMAPE"
 }, inplace=True)
-print("✅ Loaded XGBoost results")
+print("Loaded XGBoost results")
 
 # ---- LSTM ----
 lstm_path = "Prediction models/LSTM/results/LSTM_weekly_CV_results_mean.csv"
@@ -53,7 +53,7 @@ lstm.rename(columns={
     "CV_MAE_Hmean": "MAE",
     "CV_SMAPE_Hmean": "SMAPE"
 }, inplace=True)
-print("✅ Loaded LSTM results")
+print("Loaded LSTM results")
 
 # ==========================================
 # ALIGN STRUCTURES
@@ -184,7 +184,7 @@ with open(os.path.join(OUTPUT_DIR, "comparison_report.txt"), "w") as f:
     f.write(tabulate(best_model_summary, headers="keys", tablefmt="grid", showindex=False))
     f.write("\n")
 
-print("✅ Comparison report saved")
+print("Comparison report saved")
 
 # ==========================================
 # VISUALIZATIONS
@@ -227,6 +227,6 @@ plt.tight_layout()
 plt.savefig(os.path.join(OUTPUT_DIR, "SMAPE_comparison.png"), dpi=300)
 plt.close()
 
-print("✅ Visualizations saved")
-print(f"📁 All comparison files saved to: {OUTPUT_DIR}")
+print("Visualizations saved")
+print(f"All comparison files saved to: {OUTPUT_DIR}")
 
