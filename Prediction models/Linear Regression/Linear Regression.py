@@ -86,7 +86,7 @@ def plot_cv_mean_graphs_for_atm(atm_id, mean_df, save_dir):
 # ===============================================================
 # LOAD
 # ===============================================================
-print("📂 Loading prepared weekly data...")
+print("Loading prepared weekly data...")
 with open(DATA_PATH, "rb") as f:
     prepared = pickle.load(f)
 
@@ -99,7 +99,7 @@ scalers  = prepared["scalers"]
 with open(TSCV_PATH, "rb") as f:
     tscv_splits = pickle.load(f)
 
-print(f"✅ Loaded {len(data)} weekly samples for {len(ATM_IDs)} ATMs")
+print(f"Loaded {len(data)} weekly samples for {len(ATM_IDs)} ATMs")
 assert len(targets) == 7, "Expected 7 target columns (Mon–Sun)."
 
 # ===============================================================
@@ -108,11 +108,11 @@ assert len(targets) == 7, "Expected 7 target columns (Mon–Sun)."
 cv_rows_by_h, cv_rows_mean = [], []
 cv_preds_rows, cv_preds_mean_rows = [], []
 
-print("\n🔁 Running ElasticNetCV (regularized Linear Regression)...")
+print("\nRunning ElasticNetCV (regularized Linear Regression)...")
 
 for atm_id in ATM_IDs:
     if atm_id not in tscv_splits:
-        print(f"⚠️ No CV splits for ATM {atm_id}, skipping.")
+        print(f"No CV splits for ATM {atm_id}, skipping.")
         continue
 
     atm_df = data[data["ATM_ID"] == atm_id].copy().sort_values("WEEK_START").reset_index(drop=True)
@@ -237,7 +237,7 @@ cv_mean_df.to_csv(os.path.join(RESULTS_DIR, "LR_weekly_CV_results_mean.csv"), in
 cv_preds_df.to_csv(os.path.join(PREDICTIONS_DIR, "LR_weekly_CV_predictions.csv"), index=False)
 cv_preds_mean_df.to_csv(os.path.join(PREDICTIONS_DIR, "LR_weekly_CV_predictions_mean.csv"), index=False)
 
-print("\n✅ ElasticNet (regularized Linear Regression) completed successfully!")
+print("\nElasticNet (regularized Linear Regression) completed successfully!")
 print(f"Results → {RESULTS_DIR}")
 print(f"Predictions → {PREDICTIONS_DIR}")
 print(f"Graphs → {GRAPHS_DIR}")
