@@ -89,7 +89,7 @@ def save_fig(path):
 # ===============================================================
 # LOAD WEEKLY DATA
 # ===============================================================
-print("📂 Loading prepared weekly data...")
+print("Loading prepared weekly data...")
 with open(DATA_PATH, "rb") as f:
     prepared = pickle.load(f)
 with open(TSCV_PATH, "rb") as f:
@@ -101,7 +101,7 @@ targets  = prepared["targets"]
 ATM_IDs  = prepared["ATM_IDs"]
 scalers  = prepared["scalers"]
 
-print(f"✅ Loaded {len(data)} weekly samples for {len(ATM_IDs)} ATMs")
+print(f"Loaded {len(data)} weekly samples for {len(ATM_IDs)} ATMs")
 
 # ===============================================================
 # STORAGE
@@ -115,10 +115,10 @@ full_pred_mean_rows = []
 # MODELING LOOP
 # ===============================================================
 for atm_id in ATM_IDs:
-    print(f"\n🏧 ATM {atm_id}")
+    print(f"\nATM {atm_id}")
     df = data[data["ATM_ID"] == atm_id].sort_values("WEEK_START").reset_index(drop=True)
     if len(df) < SEQ_LEN + 8:
-        print("   ⚠️ Not enough samples, skipping.")
+        print(" Not enough samples, skipping.")
         continue
 
     X_all = df[features].values
@@ -251,7 +251,7 @@ cv_mean_df.to_csv(os.path.join(RESULTS_DIR, "LSTM_weekly_CV_results_mean.csv"), 
 cv_pred_df.to_csv(os.path.join(PREDICTIONS_DIR, "LSTM_weekly_CV_predictions.csv"), index=False)
 full_pred_mean_df.to_csv(os.path.join(PREDICTIONS_DIR, "LSTM_full_mean_predictions.csv"), index=False)
 
-print("\n✅ LSTM weekly modeling completed successfully!")
+print("\nLSTM weekly modeling completed successfully!")
 print(f"Results → {RESULTS_DIR}")
 print(f"Predictions → {PREDICTIONS_DIR}")
 print(f"Graphs → {GRAPHS_DIR}")
