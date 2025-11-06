@@ -64,7 +64,7 @@ def save_fig(path):
 # ==============================
 # LOAD DATA
 # ==============================
-print("📂 Loading prepared weekly data...")
+print("Loading prepared weekly data...")
 with open(DATA_PATH, "rb") as f:
     prepared = pickle.load(f)
 with open(TSCV_PATH, "rb") as f:
@@ -76,7 +76,7 @@ targets  = prepared["targets"]
 ATM_IDs  = prepared["ATM_IDs"]
 scalers  = prepared["scalers"]
 
-print(f"✅ Loaded {len(data)} weekly samples for {len(ATM_IDs)} ATMs\n")
+print(f"Loaded {len(data)} weekly samples for {len(ATM_IDs)} ATMs\n")
 
 # ==============================
 # STORAGE FOR RESULTS
@@ -90,11 +90,11 @@ full_pred_mean_rows = []
 # MODELING
 # ==============================
 for atm_id in ATM_IDs:
-    print(f"🏧 Processing ATM {atm_id}...")
+    print(f" Processing ATM {atm_id}...")
 
     atm_df = data[data["ATM_ID"] == atm_id].copy().sort_values("WEEK_START").reset_index(drop=True)
     if atm_df.empty:
-        print(f"   ⚠️ No data, skipping.")
+        print(f"   No data, skipping.")
         continue
 
     X_all = atm_df[features].values
@@ -207,7 +207,7 @@ for atm_id in ATM_IDs:
             shap_abs_sum += np.abs(shap_contrib).mean(axis=0)
             shap_vals_all_h.append(shap_contrib)
         except Exception as e:
-            print(f"   ⚠️ SHAP failed for ATM {atm_id}, Horizon {h}: {e}")
+            print(f"   SHAP failed for ATM {atm_id}, Horizon {h}: {e}")
 
         try:
             booster = model.get_booster()
@@ -218,7 +218,7 @@ for atm_id in ATM_IDs:
                 if idx is not None:
                     fi_accum[idx] = fi_accum.get(idx, 0.0) + float(v)
         except Exception as e:
-            print(f"   ⚠️ Feature importance failed for ATM {atm_id}, Horizon {h}: {e}")
+            print(f"   Feature importance failed for ATM {atm_id}, Horizon {h}: {e}")
 
     # ==============================
     # PLOTS (Actual/Pred + Residuals)
@@ -291,7 +291,7 @@ for atm_id in ATM_IDs:
             )
             save_fig(os.path.join(SHAP_DIR, f"{atm_id}_shap_beeswarm.png"))
         except Exception as e:
-            print(f"   ⚠️ SHAP beeswarm failed for ATM {atm_id}: {e}")
+            print(f"   SHAP beeswarm failed for ATM {atm_id}: {e}")
 
     if len(fi_accum) > 0:
         fi_idx = np.array(sorted(fi_accum.keys()))
@@ -320,7 +320,7 @@ full_pred_mean_df.sort_values(["ATM_ID", "Week_Start"]).to_csv(
     os.path.join(PREDICTIONS_DIR, "XGBoost_full_mean_predictions.csv"), index=False
 )
 
-print("\n✅ XGBoost weekly modeling completed successfully!")
+print("\nXGBoost weekly modeling completed successfully!")
 print(f"Results → {RESULTS_DIR}")
 print(f"Predictions → {PREDICTIONS_DIR}")
 print(f"SHAP (bar + beeswarm) → {SHAP_DIR}")
