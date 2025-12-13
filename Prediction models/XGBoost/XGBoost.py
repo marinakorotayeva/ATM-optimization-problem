@@ -17,6 +17,10 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from xgboost import XGBRegressor
 import xgboost as xgb
 
+# IMPORTANT: import the real SHAP library (this will fail if a local folder named "shap"
+# shadows it on sys.path). We also add a small sanity check below.
+import shap
+
 # ==============================
 # CONFIG / FOLDERS
 # ==============================
@@ -27,11 +31,28 @@ OUTPUT_DIR = "Prediction models/XGBoost"
 RESULTS_DIR = os.path.join(OUTPUT_DIR, "results")
 PREDICTIONS_DIR = os.path.join(OUTPUT_DIR, "predictions")
 GRAPHS_DIR = os.path.join(OUTPUT_DIR, "graphs")
-SHAP_DIR = os.path.join(OUTPUT_DIR, "shap")
+
+# CHANGED: do NOT name this folder "shap" (it shadows the shap package)
+SHAP_DIR = os.path.join(OUTPUT_DIR, "shap_outputs")
+
 FEATURE_IMPORTANCE_DIR = os.path.join(OUTPUT_DIR, "feature_importance")
 
 for d in [OUTPUT_DIR, RESULTS_DIR, PREDICTIONS_DIR, GRAPHS_DIR, SHAP_DIR, FEATURE_IMPORTANCE_DIR]:
     os.makedirs(d, exist_ok=True)
+
+# ---- sanity check: ensure we imported the SHAP library, not a local folder ----
+shap_file = getattr(shap, "__file__", None)
+if shap_file is None or os.path.abspath(OUTPUT_DIR) in os.path.abspath(shap_file):
+    raise ImportError(
+        "It looks like Python is not importing the real 'shap' library. "
+        "Make sure you do NOT have a local folder named 'shap' on the import path. "
+        "Rename/delete 'Prediction models/XGBoost/shap/' if it exists, then rerun."
+    )
+if not hasattr(shap, "summary_plot"):
+    raise ImportError(
+        "The imported 'shap' module does not have 'summary_plot'. "
+        "This usually means you imported the wrong module or have an incompatible SHAP version."
+    )
 
 # ==============================
 # UTILS
@@ -201,14 +222,16 @@ for atm_id in ATM_IDs:
         full_true_matrix[:, h-1] = inv_target_col(y_scaler, y_all[:, h-1], h-1)
         full_pred_matrix[:, h-1] = inv_target_col(y_scaler, y_pred_sc, h-1)
 
+        # SHAP values via XGBoost pred_contribs (does not require SHAP library)
         try:
             dmat = xgb.DMatrix(X_all, feature_names=[f"f{i}" for i in range(X_all.shape[1])])
             shap_contrib = model.get_booster().predict(dmat, pred_contribs=True)[:, :-1]
             shap_abs_sum += np.abs(shap_contrib).mean(axis=0)
             shap_vals_all_h.append(shap_contrib)
         except Exception as e:
-            print(f"   SHAP failed for ATM {atm_id}, Horizon {h}: {e}")
+            print(f"   SHAP contribs failed for ATM {atm_id}, Horizon {h}: {e}")
 
+        # Feature importance (gain)
         try:
             booster = model.get_booster()
             fmap = {f"f{i}": i for i in range(X_all.shape[1])}
@@ -232,7 +255,6 @@ for atm_id in ATM_IDs:
     plt.figure(figsize=(11, 5))
     plt.plot(weeks, mean_true, label="Actual (mean H1–H7)", linewidth=1.2)
     plt.plot(weeks, mean_pred, "--", label="Predicted (mean H1–H7)", linewidth=1.2)
-    #plt.fill_between(weeks, mean_pred - std_pred, mean_pred + std_pred, alpha=0.2, label="Pred ±1σ")
     plt.title(f"{atm_id} — Actual vs Predicted (mean across horizons)")
     plt.xlabel("Week Start")
     plt.ylabel("Withdrawals (real scale)")
@@ -241,8 +263,8 @@ for atm_id in ATM_IDs:
 
     # --- Residuals (Predicted - Actual) ---
     plt.figure(figsize=(11, 4))
-    plt.plot(weeks, residuals, color="green", linewidth=1.2)
-    plt.axhline(0, color="black", linestyle="--", linewidth=1.0)
+    plt.plot(weeks, residuals, linewidth=1.2)
+    plt.axhline(0, linestyle="--", linewidth=1.0)
     plt.title(f"{atm_id} — Residuals (Pred - Actual, mean across horizons)")
     plt.xlabel("Week Start")
     plt.ylabel("Residual (Pred - Actual)")
@@ -260,33 +282,40 @@ for atm_id in ATM_IDs:
         })
 
     # ==============================
-    # SHAP + FEATURE IMPORTANCE
+    # SHAP + FEATURE IMPORTANCE PLOTS
     # ==============================
     if len(shap_vals_all_h) > 0:
         shap_mean_abs = shap_abs_sum / len(shap_vals_all_h)
         order = np.argsort(shap_mean_abs)[::-1]
+
+        # Bar plot of mean(|contrib|)
         plt.figure(figsize=(8, 6))
         plt.barh(np.array(features)[order][::-1], shap_mean_abs[order][::-1])
-        plt.title(f"{atm_id} — Mean(|SHAP|) across horizons")
-        plt.xlabel("Mean(|SHAP|)")
+        plt.title(f"{atm_id} — Mean(|SHAP contrib|) across horizons")
+        plt.xlabel("Mean(|contrib|)")
         save_fig(os.path.join(SHAP_DIR, f"{atm_id}_shap_bar.png"))
 
+        # Beeswarm via SHAP library (now should work)
         safe_colorbar_warning_filter()
         shap_stack = np.vstack(shap_vals_all_h)
+
+        # Limit size for plotting
         max_points = min(5000, shap_stack.shape[0])
         if shap_stack.shape[0] > max_points:
             idx = np.random.RandomState(42).choice(shap_stack.shape[0], size=max_points, replace=False)
             shap_stack = shap_stack[idx]
+
         reps = int(np.ceil(shap_stack.shape[0] / X_all.shape[0]))
         X_rep = np.tile(X_all, (reps, 1))[:shap_stack.shape[0], :]
 
-        import shap as _shap
         try:
-            _plt_fig = plt.figure(figsize=(10, 6))
-            _shap.summary_plot(
-                shap_stack, X_rep,
+            plt.figure(figsize=(10, 6))
+            shap.summary_plot(
+                shap_stack,
+                X_rep,
                 feature_names=features,
-                show=False, plot_type="dot",
+                show=False,
+                plot_type="dot",
                 color_bar=False
             )
             save_fig(os.path.join(SHAP_DIR, f"{atm_id}_shap_beeswarm.png"))
@@ -308,16 +337,20 @@ for atm_id in ATM_IDs:
 # ==============================
 cv_df = pd.DataFrame(cv_rows)
 cv_df.to_csv(os.path.join(RESULTS_DIR, "XGBoost_weekly_CV_results.csv"), index=False)
+
 cv_mean_df = pd.DataFrame(cv_mean_rows)
 cv_mean_df.to_csv(os.path.join(RESULTS_DIR, "XGBoost_weekly_CV_results_mean.csv"), index=False)
 
 cv_pred_df = pd.DataFrame(cv_pred_rows)
 cv_pred_df.sort_values(["ATM_ID", "Horizon", "Week_Start"]).to_csv(
-    os.path.join(PREDICTIONS_DIR, "XGBoost_weekly_CV_predictions.csv"), index=False
+    os.path.join(PREDICTIONS_DIR, "XGBoost_weekly_CV_predictions.csv"),
+    index=False
 )
+
 full_pred_mean_df = pd.DataFrame(full_pred_mean_rows)
 full_pred_mean_df.sort_values(["ATM_ID", "Week_Start"]).to_csv(
-    os.path.join(PREDICTIONS_DIR, "XGBoost_full_mean_predictions.csv"), index=False
+    os.path.join(PREDICTIONS_DIR, "XGBoost_full_mean_predictions.csv"),
+    index=False
 )
 
 print("\nXGBoost weekly modeling completed successfully!")
