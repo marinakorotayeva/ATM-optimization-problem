@@ -232,7 +232,7 @@ for atm_id in ATM_IDs:
     plt.figure(figsize=(11, 5))
     plt.plot(weeks, mean_true, label="Actual (mean H1–H7)", linewidth=1.2)
     plt.plot(weeks, mean_pred, "--", label="Predicted (mean H1–H7)", linewidth=1.2)
-    plt.fill_between(weeks, mean_pred - std_pred, mean_pred + std_pred, alpha=0.2, label="Pred ±1σ")
+    #plt.fill_between(weeks, mean_pred - std_pred, mean_pred + std_pred, alpha=0.2, label="Pred ±1σ")
     plt.title(f"{atm_id} — Actual vs Predicted (mean across horizons)")
     plt.xlabel("Week Start")
     plt.ylabel("Withdrawals (real scale)")
