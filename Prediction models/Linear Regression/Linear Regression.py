@@ -5,6 +5,10 @@
 Improved Linear Regression model using ElasticNetCV (Ridge + Lasso hybrid)
 Predicts next 7 days (Mon–Sun) for each ATM using prepared weekly data.
 Still linear, but regularized and much more accurate.
+
+ADDED:
+- Feature importance plots (|coefficients|, aggregated over H1–H7)
+- SHAP beeswarm plots (aggregated over H1–H7), similar to XGBoost output
 """
 
 import os
@@ -14,9 +18,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import ElasticNetCV
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+import shap
 
 # ===============================================================
 # CONFIG
@@ -29,9 +36,16 @@ RESULTS_DIR = os.path.join(OUTPUT_DIR, "results")
 PREDICTIONS_DIR = os.path.join(OUTPUT_DIR, "predictions")
 GRAPHS_DIR = os.path.join(OUTPUT_DIR, "graphs")
 
+# New subfolders for explainability plots
+EXPLAIN_DIR = os.path.join(GRAPHS_DIR, "explainability")
+SHAP_DIR = os.path.join(EXPLAIN_DIR, "shap")
+FI_DIR = os.path.join(EXPLAIN_DIR, "feature_importance")
+
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(PREDICTIONS_DIR, exist_ok=True)
 os.makedirs(GRAPHS_DIR, exist_ok=True)
+os.makedirs(SHAP_DIR, exist_ok=True)
+os.makedirs(FI_DIR, exist_ok=True)
 
 # ===============================================================
 # UTILS
@@ -57,7 +71,8 @@ def format_weeks(ax):
 def plot_cv_mean_graphs_for_atm(atm_id, mean_df, save_dir):
     if mean_df.empty:
         return
-     # --- Actual vs Predicted (mean across horizons)
+
+    # --- Actual vs Predicted (mean across horizons)
     dates = pd.to_datetime(mean_df["Week_Start"])
     plt.figure(figsize=(12, 5))
     plt.plot(dates, mean_df["Actual_Mean"], label="Actual (mean)", linewidth=1.2)
@@ -76,11 +91,51 @@ def plot_cv_mean_graphs_for_atm(atm_id, mean_df, save_dir):
     plt.title(f"ATM {atm_id} – CV Residuals (Pred - Actual, mean across horizons)")
     plt.xlabel("Week Start")
     plt.ylabel("Residual")
-    plt.ylim(-2, 2)                  # Fixed residual scale
+    plt.ylim(-2, 2)  # Fixed residual scale
     plt.grid(True)
     format_weeks(plt.gca())
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, f"{atm_id}_CV_mean_allhorizons_residuals.png"))
+    plt.close()
+
+def build_elasticnet():
+    # Keep SAME model settings as in your CV loop
+    return ElasticNetCV(
+        l1_ratio=[.1, .3, .5, .7, .9],
+        alphas=np.logspace(-3, 2, 30),
+        cv=5,
+        max_iter=50000,
+        tol=1e-4,
+        random_state=42,
+        n_jobs=-1
+    )
+
+def plot_feature_importance_coeffs(atm_id, features, mean_abs_coef, save_path, top_k=20):
+    idx = np.argsort(mean_abs_coef)[::-1][:top_k]
+    top_feats = np.array(features)[idx]
+    top_vals = mean_abs_coef[idx]
+
+    plt.figure(figsize=(9, 7))
+    plt.barh(top_feats[::-1], top_vals[::-1])
+    plt.title(f"{atm_id} — Feature importance (|coeff|, H1–H7 aggregated)")
+    plt.xlabel("Mean |standardized coefficient|")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200)
+    plt.close()
+
+def plot_shap_beeswarm(atm_id, X_scaled, shap_values_agg, features, save_path):
+    # shap.summary_plot creates its own figure; show=False is important for saving
+    plt.figure()
+    shap.summary_plot(
+        shap_values_agg,
+        X_scaled,
+        feature_names=features,
+        show=False,
+        plot_size=(9, 7)
+    )
+    plt.title(f"{atm_id} — SHAP Beeswarm (H1–H7 aggregated)")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.close()
 
 # ===============================================================
@@ -143,15 +198,7 @@ for atm_id in ATM_IDs:
             X_tr_scaled = scaler_X.fit_transform(X_tr)
             X_te_scaled = scaler_X.transform(X_te)
 
-            model = ElasticNetCV(
-            l1_ratio=[.1, .3, .5, .7, .9],
-            alphas=np.logspace(-3, 2, 30),
-            cv=5,
-            max_iter=50000,                # increase iterations 5x
-            tol=1e-4,                      # smaller tolerance = better convergence
-            random_state=42,
-            n_jobs=-1                      # parallelize to make it faster
-            )
+            model = build_elasticnet()
             model.fit(X_tr_scaled, y_tr)
             y_pred_scaled = model.predict(X_te_scaled)
 
@@ -224,6 +271,52 @@ for atm_id in ATM_IDs:
         cv_preds_mean_rows.extend(g.to_dict("records"))
         plot_cv_mean_graphs_for_atm(atm_id, g, GRAPHS_DIR)
 
+    # ===============================================================
+    # ADDED: EXPLAINABILITY (Feature importance + SHAP) for this ATM
+    # Train a final model per horizon on ALL data, then aggregate H1–H7
+    # ===============================================================
+    try:
+        # Scale on all data for stable coefficient/SHAP interpretation
+        scaler_X_full = StandardScaler()
+        X_scaled_full = scaler_X_full.fit_transform(X_all)
+
+        coef_abs_list = []
+        shap_sum = None
+        n_h_used = 0
+
+        for h_idx in range(7):
+            y_h = y_all[:, h_idx]  # scaled target for this horizon
+            model_full = build_elasticnet()
+            model_full.fit(X_scaled_full, y_h)
+
+            # --- Feature importance via |coef|
+            coef_abs_list.append(np.abs(model_full.coef_))
+
+            # --- SHAP values (linear explainer chosen automatically)
+            explainer = shap.Explainer(model_full, X_scaled_full, feature_names=features)
+            sv = explainer(X_scaled_full).values  # shape: (n_samples, n_features)
+
+            if shap_sum is None:
+                shap_sum = sv.copy()
+            else:
+                shap_sum += sv
+            n_h_used += 1
+
+        # Aggregate over horizons (mean)
+        mean_abs_coef = np.mean(np.vstack(coef_abs_list), axis=0)
+
+        shap_values_agg = shap_sum / max(n_h_used, 1)
+
+        # Save plots
+        fi_path = os.path.join(FI_DIR, f"{atm_id}_feature_importance_coeffs_H1-H7.png")
+        plot_feature_importance_coeffs(atm_id, features, mean_abs_coef, fi_path, top_k=20)
+
+        shap_path = os.path.join(SHAP_DIR, f"{atm_id}_shap_beeswarm_H1-H7.png")
+        plot_shap_beeswarm(atm_id, X_scaled_full, shap_values_agg, features, shap_path)
+
+    except Exception as e:
+        print(f"[WARN] Explainability plots failed for ATM {atm_id}: {e}")
+
 # ===============================================================
 # SAVE
 # ===============================================================
@@ -241,3 +334,4 @@ print("\nElasticNet (regularized Linear Regression) completed successfully!")
 print(f"Results → {RESULTS_DIR}")
 print(f"Predictions → {PREDICTIONS_DIR}")
 print(f"Graphs → {GRAPHS_DIR}")
+print(f"Explainability → {EXPLAIN_DIR}")
