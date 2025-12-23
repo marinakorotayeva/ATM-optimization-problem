@@ -4,6 +4,7 @@
 import os
 import math
 import pickle
+import warnings
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -12,6 +13,9 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+# NEW: SHAP (for beeswarm explainability)
+import shap
 
 # ===============================================================
 # CONFIG
@@ -24,9 +28,17 @@ RESULTS_DIR = os.path.join(OUTPUT_DIR, "results")
 PREDICTIONS_DIR = os.path.join(OUTPUT_DIR, "predictions")
 GRAPHS_DIR = os.path.join(OUTPUT_DIR, "graphs")
 
+# NEW: Explainability folder (same structure as you requested for other models)
+EXPLAIN_DIR = os.path.join(OUTPUT_DIR, "Explainability")
+SHAP_DIR = os.path.join(EXPLAIN_DIR, "shap_outputs")
+FEATURE_IMPORTANCE_DIR = os.path.join(EXPLAIN_DIR, "feature_importance")
+
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(PREDICTIONS_DIR, exist_ok=True)
 os.makedirs(GRAPHS_DIR, exist_ok=True)
+os.makedirs(EXPLAIN_DIR, exist_ok=True)
+os.makedirs(SHAP_DIR, exist_ok=True)
+os.makedirs(FEATURE_IMPORTANCE_DIR, exist_ok=True)
 
 SEQ_LEN = 4       # use last 4 weeks to predict next 7 days
 EPOCHS = 80
@@ -85,6 +97,30 @@ def save_fig(path):
     plt.tight_layout()
     plt.savefig(path, bbox_inches="tight")
     plt.close()
+
+# NEW: SHAP helper (avoid harmless matplotlib warnings)
+def safe_colorbar_warning_filter():
+    warnings.filterwarnings(
+        "ignore",
+        message="No data for colormapping provided via 'c'.*",
+        category=UserWarning
+    )
+
+# NEW: Gradient-based feature importance for NN (1 plot per ATM)
+def compute_gradient_importance(model, X_seq_explain):
+    """
+    Simple NN feature importance: mean absolute gradient of mean output wrt inputs.
+    Returns importance per feature (shape: [n_features]).
+    """
+    X_tensor = tf.convert_to_tensor(X_seq_explain, dtype=tf.float32)
+    with tf.GradientTape() as tape:
+        tape.watch(X_tensor)
+        y_out = model(X_tensor, training=False)          # (n, 7)
+        y_scalar = tf.reduce_mean(y_out, axis=1)         # (n,)
+        y_mean = tf.reduce_mean(y_scalar)                # scalar
+    grads = tape.gradient(y_mean, X_tensor)              # (n, seq_len, n_features)
+    imp = tf.reduce_mean(tf.abs(grads), axis=[0, 1])     # (n_features,)
+    return imp.numpy()
 
 # ===============================================================
 # LOAD WEEKLY DATA
@@ -191,7 +227,7 @@ for atm_id in ATM_IDs:
     })
 
     # ===============================================================
-    # FULL-DATA TRAIN for Graphs
+    # FULL-DATA TRAIN for Graphs + Explainability
     # ===============================================================
     X_seq, y_seq = create_sequences(X_all, y_all, SEQ_LEN)
     model_full = build_lstm((SEQ_LEN, X_seq.shape[-1]), output_dim=7)
@@ -239,6 +275,113 @@ for atm_id in ATM_IDs:
             "Residual_Mean": float(yp - yt)
         })
 
+    # ===============================================================
+    # EXPLAINABILITY (SHAP beeswarm + feature importance) — 1 each per ATM
+    # ===============================================================
+
+        # --- SHAP beeswarm (aggregate across outputs + time) ---
+    try:
+        safe_colorbar_warning_filter()
+
+        # background and explain sets (keep small for speed/stability)
+        n_bg = min(50, len(X_seq))
+        n_explain = min(200, len(X_seq))
+
+        # deterministic selection for explain points
+        if n_explain < len(X_seq):
+            idx_explain = np.linspace(0, len(X_seq) - 1, n_explain).astype(int)
+            X_explain = X_seq[idx_explain]
+        else:
+            X_explain = X_seq
+
+        X_bg = X_seq[:n_bg]
+
+        # GradientExplainer is usually more robust for TF/Keras than DeepExplainer for RNNs
+        explainer = shap.GradientExplainer(model_full, X_bg)
+        shap_vals = explainer.shap_values(X_explain)
+
+        # --- Normalize shap_vals into a single numpy array ---
+        # Possible formats:
+        # 1) list of outputs: [ (n, seq, f), ... ] OR [ (n, seq, f, outdim) ... ]
+        # 2) array: (n, seq, f) or (n, seq, f, outdim) etc.
+        if isinstance(shap_vals, list):
+            # stack outputs first
+            shap_arr = np.stack([np.asarray(sv) for sv in shap_vals], axis=0)
+            # shap_arr now: (out, n, seq, f, ...) maybe
+            # average over output dimension
+            shap_arr = shap_arr.mean(axis=0)
+        else:
+            shap_arr = np.asarray(shap_vals)
+
+        # Now shap_arr might still have extra trailing dims (e.g., outputs)
+        # We want (n, seq, f). If there are extra dims, average them out.
+        # Example: (n, seq, f, 7) -> mean over last axis
+        while shap_arr.ndim > 3:
+            shap_arr = shap_arr.mean(axis=-1)
+
+        # If SHAP returned (seq, f) for a single sample, expand to (1, seq, f)
+        if shap_arr.ndim == 2:
+            shap_arr = shap_arr[None, :, :]
+
+        # Reduce time dimension to get standard beeswarm input: (n, f)
+        shap_2d = shap_arr.mean(axis=1)
+        X_2d = X_explain.mean(axis=1)
+
+        # Final safety check
+        if shap_2d.shape != X_2d.shape:
+            raise ValueError(f"After aggregation, SHAP shape {shap_2d.shape} != X shape {X_2d.shape}")
+
+        # Limit points for plotting
+        max_points = min(5000, shap_2d.shape[0])
+        if shap_2d.shape[0] > max_points:
+            rng = np.random.RandomState(42)
+            pick = rng.choice(shap_2d.shape[0], size=max_points, replace=False)
+            shap_2d = shap_2d[pick]
+            X_2d = X_2d[pick]
+
+        plt.figure(figsize=(10, 6))
+        shap.summary_plot(
+            shap_2d,
+            X_2d,
+            feature_names=features,
+            show=False,
+            plot_type="dot",
+            color_bar=False
+        )
+        plt.title(f"{atm_id} — SHAP Beeswarm (aggregated over time & H1–H7)", pad=12)
+        save_fig(os.path.join(SHAP_DIR, f"{atm_id}_shap_beeswarm.png"))
+
+    except Exception as e:
+        print(f"   SHAP beeswarm failed for ATM {atm_id}: {e}")
+
+
+    # --- Feature importance (gradient-based) ---
+    try:
+        # Use same explain set as above (or fallback)
+        if 'X_explain' not in locals():
+            n_explain = min(200, len(X_seq))
+            if n_explain < len(X_seq):
+                idx_explain = np.linspace(0, len(X_seq) - 1, n_explain).astype(int)
+                X_explain = X_seq[idx_explain]
+            else:
+                X_explain = X_seq
+
+        fi_vals = compute_gradient_importance(model_full, X_explain)  # (n_features,)
+        order = np.argsort(fi_vals)[::-1]
+
+        plt.figure(figsize=(8, 6))
+        plt.barh(np.array(features)[order][::-1], fi_vals[order][::-1])
+        plt.title(f"{atm_id} — Feature importance (mean |gradient|)")
+        plt.xlabel("Mean |∂output/∂feature|")
+        save_fig(os.path.join(FEATURE_IMPORTANCE_DIR, f"{atm_id}_feature_importance.png"))
+
+    except Exception as e:
+        print(f"   Feature importance failed for ATM {atm_id}: {e}")
+
+    # cleanup locals that may carry across loop (safe)
+    if "X_explain" in locals():
+        del X_explain
+
 # ===============================================================
 # SAVE RESULTS
 # ===============================================================
@@ -255,5 +398,8 @@ print("\nLSTM weekly modeling completed successfully!")
 print(f"Results → {RESULTS_DIR}")
 print(f"Predictions → {PREDICTIONS_DIR}")
 print(f"Graphs → {GRAPHS_DIR}")
+print(f"Explainability (SHAP beeswarm) → {SHAP_DIR}")
+print(f"Explainability (feature importance) → {FEATURE_IMPORTANCE_DIR}")
+
 
 
