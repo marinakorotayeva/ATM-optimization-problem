@@ -32,12 +32,14 @@ RESULTS_DIR = os.path.join(OUTPUT_DIR, "results")
 PREDICTIONS_DIR = os.path.join(OUTPUT_DIR, "predictions")
 GRAPHS_DIR = os.path.join(OUTPUT_DIR, "graphs")
 
-# CHANGED: do NOT name this folder "shap" (it shadows the shap package)
-SHAP_DIR = os.path.join(OUTPUT_DIR, "shap_outputs")
+# CHANGED: Put explainability outputs into one folder (same logic as in your Linear Regression code)
+EXPLAIN_DIR = os.path.join(OUTPUT_DIR, "Explainability")
 
-FEATURE_IMPORTANCE_DIR = os.path.join(OUTPUT_DIR, "feature_importance")
+# do NOT name this folder "shap" (it shadows the shap package)
+SHAP_DIR = os.path.join(EXPLAIN_DIR, "shap_outputs")
+FEATURE_IMPORTANCE_DIR = os.path.join(EXPLAIN_DIR, "feature_importance")
 
-for d in [OUTPUT_DIR, RESULTS_DIR, PREDICTIONS_DIR, GRAPHS_DIR, SHAP_DIR, FEATURE_IMPORTANCE_DIR]:
+for d in [OUTPUT_DIR, RESULTS_DIR, PREDICTIONS_DIR, GRAPHS_DIR, EXPLAIN_DIR, SHAP_DIR, FEATURE_IMPORTANCE_DIR]:
     os.makedirs(d, exist_ok=True)
 
 # ---- sanity check: ensure we imported the SHAP library, not a local folder ----
@@ -222,7 +224,7 @@ for atm_id in ATM_IDs:
         full_true_matrix[:, h-1] = inv_target_col(y_scaler, y_all[:, h-1], h-1)
         full_pred_matrix[:, h-1] = inv_target_col(y_scaler, y_pred_sc, h-1)
 
-        # SHAP values via XGBoost pred_contribs (does not require SHAP library)
+        # SHAP values via XGBoost pred_contribs
         try:
             dmat = xgb.DMatrix(X_all, feature_names=[f"f{i}" for i in range(X_all.shape[1])])
             shap_contrib = model.get_booster().predict(dmat, pred_contribs=True)[:, :-1]
@@ -282,20 +284,10 @@ for atm_id in ATM_IDs:
         })
 
     # ==============================
-    # SHAP + FEATURE IMPORTANCE PLOTS
+    # SHAP (BEEWARM ONLY) + FEATURE IMPORTANCE PLOTS
     # ==============================
+    # SHAP: 1 beeswarm per ATM (H1–H7 aggregated) => total 5 beeswarms
     if len(shap_vals_all_h) > 0:
-        shap_mean_abs = shap_abs_sum / len(shap_vals_all_h)
-        order = np.argsort(shap_mean_abs)[::-1]
-
-        # Bar plot of mean(|contrib|)
-        plt.figure(figsize=(8, 6))
-        plt.barh(np.array(features)[order][::-1], shap_mean_abs[order][::-1])
-        plt.title(f"{atm_id} — Mean(|SHAP contrib|) across horizons")
-        plt.xlabel("Mean(|contrib|)")
-        save_fig(os.path.join(SHAP_DIR, f"{atm_id}_shap_bar.png"))
-
-        # Beeswarm via SHAP library (now should work)
         safe_colorbar_warning_filter()
         shap_stack = np.vstack(shap_vals_all_h)
 
@@ -318,10 +310,12 @@ for atm_id in ATM_IDs:
                 plot_type="dot",
                 color_bar=False
             )
+            plt.title(f"{atm_id} — SHAP Beeswarm (H1–H7 aggregated)", pad=12)
             save_fig(os.path.join(SHAP_DIR, f"{atm_id}_shap_beeswarm.png"))
         except Exception as e:
             print(f"   SHAP beeswarm failed for ATM {atm_id}: {e}")
 
+    # Feature importance: 1 plot per ATM (gain aggregated) => total 5 plots
     if len(fi_accum) > 0:
         fi_idx = np.array(sorted(fi_accum.keys()))
         fi_vals = np.array([fi_accum[i] for i in fi_idx])
@@ -356,6 +350,7 @@ full_pred_mean_df.sort_values(["ATM_ID", "Week_Start"]).to_csv(
 print("\nXGBoost weekly modeling completed successfully!")
 print(f"Results → {RESULTS_DIR}")
 print(f"Predictions → {PREDICTIONS_DIR}")
-print(f"SHAP (bar + beeswarm) → {SHAP_DIR}")
-print(f"Feature importance → {FEATURE_IMPORTANCE_DIR}")
+print(f"Explainability (SHAP beeswarm) → {SHAP_DIR}")
+print(f"Explainability (feature importance) → {FEATURE_IMPORTANCE_DIR}")
 print(f"Graphs → {GRAPHS_DIR}")
+
