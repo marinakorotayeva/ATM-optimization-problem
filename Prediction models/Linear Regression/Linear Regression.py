@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-Improved Linear Regression model using ElasticNetCV (Ridge + Lasso hybrid)
-Predicts next 7 days (Mon–Sun) for each ATM using prepared weekly data.
-Still linear, but regularized and much more accurate.
-
-ADDED:
-- Feature importance plots (|coefficients|, aggregated over H1–H7)
-- SHAP beeswarm plots (aggregated over H1–H7), similar to XGBoost output
-"""
-
 import os
 import math
 import pickle
