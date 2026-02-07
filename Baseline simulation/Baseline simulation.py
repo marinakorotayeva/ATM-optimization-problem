@@ -23,7 +23,7 @@ import numpy as np
 # ============================================================
 # CONFIGURATION
 # ============================================================
-# 🔧 Choose your prediction source file here
+# Choose prediction source file
 PRED_FILE = "Prediction models/XGBoost/predictions/XGBoost_weekly_CV_predictions.csv"
 # PRED_FILE = "Prediction models/Linear Regression/predictions/LR_weekly_CV_predictions.csv"
 # PRED_FILE = "Prediction models/LSTM/predictions/LSTM_weekly_CV_predictions.csv"
@@ -41,9 +41,9 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 # LOAD FORECAST DATA
 # ============================================================
 if not os.path.exists(PRED_FILE):
-    raise FileNotFoundError(f"❌ Prediction file not found: {PRED_FILE}")
+    raise FileNotFoundError(f"Prediction file not found: {PRED_FILE}")
 
-print(f"📂 Loading predictions from: {PRED_FILE}")
+print(f"Loading predictions from: {PRED_FILE}")
 df = pd.read_csv(PRED_FILE)
 df["Week_Start"] = pd.to_datetime(df["Week_Start"], errors="coerce")
 df = df.dropna(subset=["Week_Start"])
@@ -54,10 +54,10 @@ df["Date"] = df["Week_Start"] + pd.to_timedelta(df["Horizon"] - 1, unit="D")
 
 # If predictions are in log1p scale → convert back to real scale
 if df["Predicted"].mean() < 100:  # heuristic threshold
-    print("🔁 Detected log-scale predictions — converting to real cash values...")
+    print("Detected log-scale predictions — converting to real cash values...")
     df["Predicted"] = np.expm1(df["Predicted"])
 else:
-    print("✅ Predictions already in real cash scale.")
+    print("Predictions already in real cash scale.")
 
 # ============================================================
 # SIMULATION FUNCTION
@@ -109,7 +109,7 @@ def simulate_monday_refill(pred_df, capacity, init_stock, refill_cost, penalty):
 # ============================================================
 # RUN SIMULATION
 # ============================================================
-print("\n🏧 Running baseline simulation (refill every Monday to full capacity)...")
+print("\nRunning baseline simulation (refill every Monday to full capacity)...")
 
 sim_df = simulate_monday_refill(
     pred_df=df,
@@ -150,11 +150,11 @@ with open(readable_txt, "w", encoding="utf-8") as f:
 # ============================================================
 # PRINT SUMMARY
 # ============================================================
-print("\n✅ Baseline simulation complete!")
-print("📁 Daily results (CSV):", daily_csv)
-print("📁 Readable report (TXT):", readable_txt)
-print("📁 Summary metrics (CSV):", metrics_csv)
-print("\n📊 Summary Metrics:")
+print("\nBaseline simulation complete!")
+print("Daily results (CSV):", daily_csv)
+print("Readable report (TXT):", readable_txt)
+print("Summary metrics (CSV):", metrics_csv)
+print("\nSummary Metrics:")
 # Properly format numbers with thousand separators
 for col in ["Total_Cost", "CashOut_Days", "Refill_Count", "Total_Refilled"]:
     metrics_df[col] = metrics_df[col].map("{:,.0f}".format)
