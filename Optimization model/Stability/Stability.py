@@ -6,19 +6,26 @@ Stability analysis for ATM refill optimization
 ==============================================
 
 What it does:
-- For each forecasting model (LR, XGBoost, LSTM)
+- For each forecasting model (LinearRegression, XGBoost, LSTM)
 - For each forecast multiplier (0.900..1.100 in steps of 0.001)
   -> scales predicted withdrawals
   -> runs the weekly optimization
-  -> saves results + metrics
-- Builds a stability summary table (deltas vs multiplier=1.000 baseline)
-- Produces ONE combined stability figure (3 panels):
-    1) ΔTotal cost (%)
-    2) ΔRefill count
-    3) Refill-days Jaccard vs baseline (schedule stability)
+  -> computes metrics and schedule-stability (Jaccard vs baseline multiplier=1.000)
+- Builds ONE stability summary table (single CSV)
+- Produces THREE separate plots (no combined multi-panel plot):
+    1) cost_sensitivity.png      : ΔTotal cost (%) vs baseline
+    2) refillcount_sensitivity.png: ΔRefill count vs baseline
+    3) schedule_stability.png     : Refill-days Jaccard similarity vs baseline
 
-Change requested:
-- Keep lines, REMOVE marker dots from the plot.
+Key change vs old version:
+- Outputs far fewer files:
+  * No per-multiplier "results_*.csv"
+  * No per-multiplier "metrics_*.csv"
+  * Only one summary CSV + three PNG plots
+
+Note:
+- This keeps the analysis logic and resulting plots the same as before,
+  but avoids writing hundreds of intermediate CSV files.
 """
 
 import os
@@ -55,7 +62,7 @@ MODEL_PATHS = {
     "LSTM": "Prediction models/LSTM/predictions/LSTM_weekly_CV_predictions.csv",
 }
 
-# Multipliers to test — now 0.001 steps: 0.900, 0.901, ..., 1.100
+# Multipliers to test — 0.001 steps: 0.900, 0.901, ..., 1.100
 # Integer-based construction avoids floating point artifacts.
 MULTIPLIERS = [i / 1000 for i in range(900, 1100 + 1)]
 
@@ -69,8 +76,9 @@ os.makedirs(OUT_ROOT, exist_ok=True)
 # ============================================================
 def _ensure_real_scale_predictions(df: pd.DataFrame) -> pd.DataFrame:
     """
-    The predictions may be log-space. Use the same heuristic:
-    if mean is small (<100), treat as log and convert with exp(x)-1.
+    The predictions may be log-space.
+    Heuristic:
+      if mean(Predicted) < 100 -> treat as log and convert with exp(x)-1.
     """
     df = df.copy()
     if df["Predicted"].mean() < 100:
@@ -90,6 +98,25 @@ def load_predictions(pred_file: str) -> pd.DataFrame:
     )
     df = _ensure_real_scale_predictions(df)
     return df
+
+
+def refill_days_set_from_df(results_df: pd.DataFrame) -> set[tuple[str, str]]:
+    """
+    Set of refill 'events' as (ATM, Date) where Refill_Amount > 0.
+    Used for Jaccard similarity vs baseline.
+    """
+    df = results_df[results_df["Refill_Amount"] > 0]
+    return set(zip(df["ATM"].astype(str), df["Date"].astype(str)))
+
+
+def jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    inter = len(a.intersection(b))
+    uni = len(a.union(b))
+    return inter / uni if uni > 0 else 0.0
 
 
 def run_weekly_optimization(
@@ -150,14 +177,18 @@ def run_weekly_optimization(
             else:
                 model += s[m][t] == s[m][t - 1] + x[m][t] - withdrawal
 
+            # Link refill amount to binary indicator
             model += x[m][t] <= N * y[m][t]
             model += x[m][t] >= epsilon * y[m][t]
+
+            # Capacity
             model += s[m][t] <= C[m]
 
-            # out-of-cash indicator
+            # out-of-cash indicator (kept as in your original code)
             model += s[m][t] >= -N * z[m][t]
             model += s[m][t] <= N * (1 - z[m][t])
 
+    # Daily budget constraint
     for t in range(T):
         model += lpSum(x[m][t] for m in range(M)) <= B[t]
 
@@ -201,16 +232,13 @@ def run_optimization_for_multiplier(
     model_name: str,
     pred_df: pd.DataFrame,
     multiplier: float,
-    out_dir: str,
-) -> tuple[str, dict]:
+) -> tuple[pd.DataFrame, dict]:
     """
     Run the whole rolling weekly optimization for a given model + multiplier.
     Returns:
-      - path to results CSV
+      - results_df (daily rows, in-memory)
       - metrics dict
     """
-    os.makedirs(out_dir, exist_ok=True)
-
     # Scale predictions (in REAL scale)
     df = pred_df.copy()
     df["Predicted_Real"] = df["Predicted_Real"] * float(multiplier)
@@ -233,9 +261,6 @@ def run_optimization_for_multiplier(
 
     results_df = pd.DataFrame(all_rows)
 
-    results_path = os.path.join(out_dir, f"atm_refill_results_{model_name}_x{multiplier:.3f}.csv")
-    results_df.to_csv(results_path, index=False)
-
     metrics = {
         "Model": model_name,
         "Forecast_Multiplier": float(multiplier),
@@ -243,33 +268,9 @@ def run_optimization_for_multiplier(
         "CashOut_Days": int(results_df["Out_of_Cash"].sum()),
         "Refill_Count": int((results_df["Refill_Amount"] > 0).sum()),
         "Total_Refilled": float(results_df["Refill_Amount"].sum()),
-        "Results_File": results_path,
     }
 
-    metrics_path = os.path.join(out_dir, f"metrics_{model_name}_x{multiplier:.3f}.csv")
-    pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
-
-    return results_path, metrics
-
-
-def refill_days_set(results_csv: str) -> set[tuple[str, str]]:
-    """
-    Set of refill 'events' as (ATM, Date) where Refill_Amount > 0.
-    Used for Jaccard similarity vs baseline.
-    """
-    df = pd.read_csv(results_csv)
-    df = df[df["Refill_Amount"] > 0]
-    return set(zip(df["ATM"].astype(str), df["Date"].astype(str)))
-
-
-def jaccard(a: set, b: set) -> float:
-    if not a and not b:
-        return 1.0
-    if not a or not b:
-        return 0.0
-    inter = len(a.intersection(b))
-    uni = len(a.union(b))
-    return inter / uni if uni > 0 else 0.0
+    return results_df, metrics
 
 
 # ============================================================
@@ -277,34 +278,29 @@ def jaccard(a: set, b: set) -> float:
 # ============================================================
 def main():
     all_metrics = []
+    baseline_refill_sets: dict[str, set[tuple[str, str]]] = {}
 
-    # 1) Run optimization for all models & multipliers
+    # 1) Run optimization for all models & multipliers (NO per-multiplier CSV outputs)
     for model_name, pred_path in MODEL_PATHS.items():
         if not os.path.exists(pred_path):
             raise FileNotFoundError(f"Missing predictions file: {pred_path}")
 
         pred_df = load_predictions(pred_path)
-        model_out_dir = os.path.join(OUT_ROOT, model_name)
-        os.makedirs(model_out_dir, exist_ok=True)
 
         for mult in MULTIPLIERS:
-            out_dir = model_out_dir
+            results_df, metrics = run_optimization_for_multiplier(
+                model_name=model_name,
+                pred_df=pred_df,
+                multiplier=mult,
+            )
 
-            # Cache: if results already exist, reuse
-            results_csv = os.path.join(out_dir, f"atm_refill_results_{model_name}_x{mult:.3f}.csv")
-            metrics_csv = os.path.join(out_dir, f"metrics_{model_name}_x{mult:.3f}.csv")
+            refill_set = refill_days_set_from_df(results_df)
 
-            if os.path.exists(results_csv) and os.path.exists(metrics_csv):
-                metrics = pd.read_csv(metrics_csv).iloc[0].to_dict()
-                metrics["Results_File"] = results_csv  # ensure correct
-            else:
-                _, metrics = run_optimization_for_multiplier(
-                    model_name=model_name,
-                    pred_df=pred_df,
-                    multiplier=mult,
-                    out_dir=out_dir,
-                )
+            # Store baseline refill set once per model (multiplier=1.0)
+            if np.isclose(mult, 1.0, atol=1e-12):
+                baseline_refill_sets[model_name] = refill_set
 
+            metrics["RefillDays_Set"] = refill_set  # keep in-memory for Jaccard computation
             all_metrics.append(metrics)
 
     summary = pd.DataFrame(all_metrics)
@@ -313,6 +309,7 @@ def main():
     rows = []
     for model_name in summary["Model"].unique():
         sub = summary[summary["Model"] == model_name].copy()
+
         base = sub[np.isclose(sub["Forecast_Multiplier"], 1.0, atol=1e-12)]
         if base.empty:
             raise ValueError(f"No baseline (multiplier=1.000) found for model {model_name}")
@@ -320,16 +317,17 @@ def main():
         base_cost = float(base["Total_Cost"].iloc[0])
         base_refills = int(base["Refill_Count"].iloc[0])
         base_refilled_amt = float(base["Total_Refilled"].iloc[0])
-        base_set = refill_days_set(str(base["Results_File"].iloc[0]))
+
+        base_set = baseline_refill_sets.get(model_name)
+        if base_set is None:
+            raise ValueError(f"Baseline refill set missing for model {model_name}")
 
         for _, r in sub.iterrows():
             m = float(r["Forecast_Multiplier"])
             cost = float(r["Total_Cost"])
             refill_cnt = int(r["Refill_Count"])
             total_refilled = float(r["Total_Refilled"])
-            res_file = str(r["Results_File"])
-
-            this_set = refill_days_set(res_file)
+            this_set = r["RefillDays_Set"]
             jac = jaccard(base_set, this_set)
 
             rows.append(
@@ -340,7 +338,6 @@ def main():
                     "CashOut_Days": int(r["CashOut_Days"]),
                     "Refill_Count": refill_cnt,
                     "Total_Refilled": total_refilled,
-                    "Results_File": res_file,
                     "Delta_Cost_%": (cost / base_cost - 1.0) * 100.0 if base_cost != 0 else np.nan,
                     "Delta_RefillCount": refill_cnt - base_refills,
                     "Delta_TotalRefilled": total_refilled - base_refilled_amt,
@@ -358,36 +355,69 @@ def main():
     stability.to_csv(stability_csv, index=False)
     print(f"Saved stability summary -> {stability_csv}")
 
-    # 3) Plot: one combined figure (LINES ONLY — no markers)
-    fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
-
-    for model_name in stability["Model"].unique():
-        sub = stability[stability["Model"] == model_name].sort_values("Forecast_Multiplier")
-        x = sub["Forecast_Multiplier"].to_numpy()
-
-        # NO marker="o" here -> removes dots
-        axes[0].plot(x, sub["Delta_Cost_%"].to_numpy(), label=model_name)
-        axes[1].plot(x, sub["Delta_RefillCount"].to_numpy(), label=model_name)
-        axes[2].plot(x, sub["RefillDays_Jaccard_vs_Base"].to_numpy(), label=model_name)
-
-    for ax in axes:
+    # 3) Plot THREE separate figures (lines only, no markers)
+    # Common styling
+    def _style_ax(ax: plt.Axes):
         ax.axvline(1.0, linestyle="--", linewidth=1)
         ax.grid(True, linestyle="--", alpha=0.4)
 
-    axes[0].set_title("Stability analysis — sensitivity to forecast multiplier (all models)")
-    axes[0].set_ylabel("ΔTotal cost (%) vs baseline")
-    axes[1].set_ylabel("ΔRefill count vs baseline")
-    axes[2].set_ylabel("Refill-days Jaccard vs baseline")
-    axes[2].set_xlabel("Forecast multiplier")
+    # --- Plot 1: Cost sensitivity ---
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for model_name in stability["Model"].unique():
+        sub = stability[stability["Model"] == model_name].sort_values("Forecast_Multiplier")
+        x = sub["Forecast_Multiplier"].to_numpy()
+        ax.plot(x, sub["Delta_Cost_%"].to_numpy(), label=model_name)
 
-    axes[0].legend(loc="best")
+    _style_ax(ax)
+    ax.set_title("Cost sensitivity to forecast scaling")
+    ax.set_xlabel("Forecast multiplier (applied to predicted withdrawals)")
+    ax.set_ylabel("ΔTotal cost vs baseline (%)")
+    ax.legend(loc="best")
 
-    plot_path = os.path.join(OUT_ROOT, "stability_all_models.png")
     fig.tight_layout()
-    fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+    plot1_path = os.path.join(OUT_ROOT, "cost_sensitivity.png")
+    fig.savefig(plot1_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+    print(f"Saved plot -> {plot1_path}")
 
-    print(f"Saved stability plot -> {plot_path}")
+    # --- Plot 2: Refill-count sensitivity ---
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for model_name in stability["Model"].unique():
+        sub = stability[stability["Model"] == model_name].sort_values("Forecast_Multiplier")
+        x = sub["Forecast_Multiplier"].to_numpy()
+        ax.plot(x, sub["Delta_RefillCount"].to_numpy(), label=model_name)
+
+    _style_ax(ax)
+    ax.set_title("Refill-count sensitivity to forecast scaling")
+    ax.set_xlabel("Forecast multiplier (applied to predicted withdrawals)")
+    ax.set_ylabel("ΔRefill count vs baseline")
+    ax.legend(loc="best")
+
+    fig.tight_layout()
+    plot2_path = os.path.join(OUT_ROOT, "refillcount_sensitivity.png")
+    fig.savefig(plot2_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved plot -> {plot2_path}")
+
+    # --- Plot 3: Schedule stability (Jaccard similarity) ---
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for model_name in stability["Model"].unique():
+        sub = stability[stability["Model"] == model_name].sort_values("Forecast_Multiplier")
+        x = sub["Forecast_Multiplier"].to_numpy()
+        ax.plot(x, sub["RefillDays_Jaccard_vs_Base"].to_numpy(), label=model_name)
+
+    _style_ax(ax)
+    ax.set_title("Schedule stability to forecast scaling")
+    ax.set_xlabel("Forecast multiplier (applied to predicted withdrawals)")
+    ax.set_ylabel("Jaccard similarity of refill-days vs baseline (0–1)")
+    ax.set_ylim(0.0, 1.05)  # keep consistent and avoid exaggerating tiny deviations
+    ax.legend(loc="best")
+
+    fig.tight_layout()
+    plot3_path = os.path.join(OUT_ROOT, "schedule_stability.png")
+    fig.savefig(plot3_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved plot -> {plot3_path}")
 
 
 if __name__ == "__main__":
