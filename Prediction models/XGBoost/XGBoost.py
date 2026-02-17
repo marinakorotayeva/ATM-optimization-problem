@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import os
 import math
 import pickle
@@ -17,8 +14,6 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from xgboost import XGBRegressor
 import xgboost as xgb
 
-# IMPORTANT: import the real SHAP library (this will fail if a local folder named "shap"
-# shadows it on sys.path). We also add a small sanity check below.
 import shap
 
 # ==============================
@@ -42,7 +37,7 @@ FEATURE_IMPORTANCE_DIR = os.path.join(EXPLAIN_DIR, "feature_importance")
 for d in [OUTPUT_DIR, RESULTS_DIR, PREDICTIONS_DIR, GRAPHS_DIR, EXPLAIN_DIR, SHAP_DIR, FEATURE_IMPORTANCE_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# ---- sanity check: ensure we imported the SHAP library, not a local folder ----
+# ---- sanity check: to ensure the SHAP library is imported, not a local folder ----
 shap_file = getattr(shap, "__file__", None)
 if shap_file is None or os.path.abspath(OUTPUT_DIR) in os.path.abspath(shap_file):
     raise ImportError(
