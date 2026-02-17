@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 ATM Cash Refill Optimization
@@ -47,7 +45,7 @@ os.makedirs(BASE_OUT_DIR, exist_ok=True)
 # HELPER FUNCTION — Optimization per model
 # ============================================================
 def run_optimization(model_name: str, pred_file: str):
-    print(f"\n🚀 Starting optimization using {model_name} predictions")
+    print(f"\n Starting optimization using {model_name} predictions")
 
     # --- Load forecast data ---
     if not os.path.exists(pred_file):
@@ -87,7 +85,7 @@ def run_optimization(model_name: str, pred_file: str):
     # ============================================================
     for week_start in unique_weeks:
         week_end = week_start + timedelta(days=6)
-        print(f"\n📅 Week: {week_start.date()} → {week_end.date()}")
+        print(f"\n Week: {week_start.date()} → {week_end.date()}")
 
         week_atms = df[df["Week_Start"] == week_start]["ATM_ID"].unique()
         M = len(week_atms)
@@ -153,7 +151,7 @@ def run_optimization(model_name: str, pred_file: str):
         # SOLVE
         # ========================================================
         status = model.solve(PULP_CBC_CMD(msg=0))
-        print(f"🧮 Solver status: {LpStatus[status]}")
+        print(f" Solver status: {LpStatus[status]}")
 
         # ========================================================
         # COLLECT RESULTS
@@ -209,7 +207,7 @@ def run_optimization(model_name: str, pred_file: str):
     metrics_path = os.path.join(model_dir, f"metrics_{model_name}.csv")
     metrics_df.to_csv(metrics_path, index=False)
 
-    print("\n📊 Summary Metrics:")
+    print("\n Summary Metrics:")
     print(metrics_df.to_string(index=False, float_format="%.2f"))
 
     # Save readable report
@@ -226,7 +224,7 @@ def run_optimization(model_name: str, pred_file: str):
     # ============================================================
     # PLOTS PER ATM (IMPROVED)
     # ============================================================
-    print(f"📊 Creating improved plots for {model_name}...")
+    print(f" Creating improved plots for {model_name}...")
     for atm in results_df["ATM"].unique():
         atm_df = results_df[results_df["ATM"] == atm].copy()
         if atm_df.empty:
