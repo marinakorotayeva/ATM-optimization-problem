@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Stability analysis for ATM refill optimization
@@ -17,15 +15,6 @@ What it does:
     2) refillcount_sensitivity.png: ΔRefill count vs baseline
     3) schedule_stability.png     : Refill-days Jaccard similarity vs baseline
 
-Key change vs old version:
-- Outputs far fewer files:
-  * No per-multiplier "results_*.csv"
-  * No per-multiplier "metrics_*.csv"
-  * Only one summary CSV + three PNG plots
-
-Note:
-- This keeps the analysis logic and resulting plots the same as before,
-  but avoids writing hundreds of intermediate CSV files.
 """
 
 import os
