@@ -1,16 +1,4 @@
 
-"""
-ATM Cash Refill Optimization
-============================
-
-This script connects your forecasting models (Linear Regression, XGBoost, and LSTM)
-with the weekly optimization model. For each model, it minimizes refill costs and
-out-of-cash penalties under budget and operational constraints.
-
-Results are saved separately per model in:
-    Optimization model/results_<ModelName>/
-"""
-
 import os
 import pandas as pd
 import numpy as np
@@ -110,11 +98,11 @@ def run_optimization(model_name: str, pred_file: str):
         model = LpProblem(f"ATM_Optimization_{model_name}_{week_start.date()}", LpMinimize)
 
         N = max(C) * 2
-        epsilon = 1e-3
+        epsilon = 10000
 
         x = [[LpVariable(f"x_{m}_{t}", lowBound=0, cat="Continuous") for t in range(T)] for m in range(M)]
         y = [[LpVariable(f"y_{m}_{t}", cat="Binary") for t in range(T)] for m in range(M)]
-        s = [[LpVariable(f"s_{m}_{t}", lowBound=0, upBound=C[m], cat="Continuous") for t in range(T)] for m in range(M)]
+        s = [[LpVariable(f"s_{m}_{t}", lowBound=-N, upBound=C[m], cat="Continuous") for t in range(T)] for m in range(M)]
         z = [[LpVariable(f"z_{m}_{t}", cat="Binary") for t in range(T)] for m in range(M)]
 
         # Objective: minimize refill + penalty costs
@@ -141,7 +129,7 @@ def run_optimization(model_name: str, pred_file: str):
 
                 # Out-of-cash indicator
                 model += s[m][t] >= -N * z[m][t]
-                model += s[m][t] <= N * (1 - z[m][t])
+                model += s[m][t] <= -epsilon + N * (1 - z[m][t])
 
         # Daily budget
         for t in range(T):
@@ -184,7 +172,7 @@ def run_optimization(model_name: str, pred_file: str):
                 })
 
             week_cost += atm_cost
-            initial_stocks[atm] = value(s[m][T - 1])
+            initial_stocks[atm] = max(0, value(s[m][T - 1]))
 
         print(f"Total weekly cost ({model_name}): {week_cost:,.2f}")
 
