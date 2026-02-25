@@ -1,0 +1,4 @@
+Metric,Linear Regression,XGBoost,LSTM,XGB_Improvement_vs_LR,LSTM_Improvement_vs_LR
+RMSE,0.614,0.605,0.851,+1.4%,-38.6%
+MAE,0.493,0.471,0.708,+4.5%,-43.5%
+SMAPE,9.516,9.130,13.607,+4.1%,-43.0%
