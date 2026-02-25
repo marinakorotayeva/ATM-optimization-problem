@@ -117,7 +117,7 @@ df_final = pd.concat(enhanced_parts, axis=0).dropna().reset_index(drop=True)
 # ===============================================================
 # SCALE PER ATM
 # ===============================================================
-print("📊 Scaling per ATM...")
+print("Scaling per ATM...")
 scalers = {}
 scaled_frames = []
 
