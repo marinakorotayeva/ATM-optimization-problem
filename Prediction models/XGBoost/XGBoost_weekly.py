@@ -14,8 +14,7 @@ For each week, export 3 scenario files:
   - x0p9
   - x1p1
 
-Output directory:
-  Prediction models/XGBoost/predictions/
+
 """
 
 import os
