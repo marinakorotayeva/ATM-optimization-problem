@@ -30,7 +30,7 @@ TARGET_MULT = 2.50      # S roughly = TARGET_MULT * s (try 1.8–3.5)
 EXTRA_TARGET = 0        # additional absolute target cash on top of TARGET_MULT*s
 
 # Optional: do NOT refill tiny amounts (reduces operational noise)
-MIN_REFILL_AMOUNT = 0   # e.g. 50_000 to ignore very small refills
+MIN_REFILL_AMOUNT = 10_000   
 
 # Output folder
 RESULTS_DIR = "Benchmark models/Heuristic model/results"
