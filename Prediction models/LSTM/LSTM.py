@@ -1,12 +1,46 @@
 import os
+import random
+
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 import math
 import pickle
 import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 import numpy as np
 import pandas as pd
+
+SEED = 42
+
+# 1) Seeds
+os.environ["PYTHONHASHSEED"] = str(SEED)
+random.seed(SEED)
+np.random.seed(SEED)
+
+# 2) Make TF CPU ops more deterministic
+os.environ["TF_DETERMINISTIC_OPS"] = "1"
+
+# 3) Reduce run-to-run drift on CPU (oneDNN can change numerics slightly)
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
 import tensorflow as tf
+
+tf.random.set_seed(SEED)
+
+# In TF 2.20 this exists and helps determinism
+try:
+    tf.config.experimental.enable_op_determinism(True)
+except Exception:
+    pass
+
+# Reduce nondeterminism from parallelism (optional but helps)
+tf.config.threading.set_intra_op_parallelism_threads(1)
+tf.config.threading.set_inter_op_parallelism_threads(1)
+
+
 from tensorflow.keras import layers, models, callbacks
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 import matplotlib
@@ -21,7 +55,6 @@ import shap
 # ===============================================================
 DATA_PATH = "Prediction models/Data/prepared_weekly.pkl"
 TSCV_PATH = "Prediction models/Data/tscv_weekly.pkl"
-
 OUTPUT_DIR = "Prediction models/LSTM"
 RESULTS_DIR = os.path.join(OUTPUT_DIR, "results")
 PREDICTIONS_DIR = os.path.join(OUTPUT_DIR, "predictions")
@@ -399,6 +432,7 @@ print(f"Predictions → {PREDICTIONS_DIR}")
 print(f"Graphs → {GRAPHS_DIR}")
 print(f"Explainability (SHAP beeswarm) → {SHAP_DIR}")
 print(f"Explainability (feature importance) → {FEATURE_IMPORTANCE_DIR}")
+
 
 
 
