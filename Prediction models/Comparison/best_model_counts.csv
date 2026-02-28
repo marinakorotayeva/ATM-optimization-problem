@@ -1,4 +1,0 @@
-Metric,Linear Regression,XGBoost,LSTM,Total ATMs
-RMSE,1,4,0,5
-MAE,1,4,0,5
-SMAPE,1,4,0,5
